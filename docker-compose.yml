@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: ecommerce-postgres
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-ecommerce_db}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/ddl:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ecommerce-network
+
+  # Pipeline service (optional, for development)
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ecommerce-pipeline
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_USER: ${DB_USER:-postgres}
+      PG_PASSWORD: ${DB_PASSWORD:-postgres}
+      PG_DATABASE: ${DB_NAME:-ecommerce_db}
+      LOCAL_DATA_LAKE_PATH: /data/delta_lake
+    volumes:
+      - ./data:/app/data:ro
+      - delta_lake_data:/data/delta_lake
+      - ./logs:/app/logs
+    networks:
+      - ecommerce-network
+    profiles:
+      - with-pipeline
+
+  # Optional: pgAdmin for database management
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: ecommerce-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - ecommerce-network
+    profiles:
+      - with-pgadmin
+
+networks:
+  ecommerce-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  delta_lake_data:
+    driver: local
+
