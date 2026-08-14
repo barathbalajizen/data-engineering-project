@@ -65,6 +65,7 @@ data/
 *.csv
 *.parquet
 *.delta
+!tests/fixtures/*.csv
 
 # Azure Storage Local Emulator
 *.db

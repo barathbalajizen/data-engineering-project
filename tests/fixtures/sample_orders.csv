@@ -1,0 +1,6 @@
+order_id,product_id,customer_id,customer_state,customer_city,customer_zip,order_date,order_quantity,order_value,shipping_cost,total_amount
+O001,P001,C001,SP,Sao Paulo,01000,2024-01-10,1,999.99,50.00,1049.99
+O002,P002,C002,RJ,Rio,20000,2024-01-11,2,59.98,10.00,69.98
+O003,P001,C001,SP,Sao Paulo,01000,2024-01-12,1,999.99,50.00,1049.99
+O004,P003,C001,SP,Sao Paulo,01000,2024-01-13,1,299.99,40.00,339.99
+O005,P002,C002,RJ,Rio,20000,2024-01-14,3,89.97,15.00,104.97

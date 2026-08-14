@@ -1,0 +1,6 @@
+review_id,review_comment,order_id,product_id,review_creation_date
+R001,Great product! Arrived quickly and in perfect condition.,O001,P001,2024-01-10
+R002,Product is good but packaging was damaged.,O002,P002,2024-01-11
+R003,Excellent quality and fast delivery.,O003,P001,2024-01-12
+R004,This monitor is broken. Very disappointed.,O004,P003,2024-01-13
+R005,Average product. Nothing special.,O005,P002,2024-01-14
