@@ -31,24 +31,33 @@ def load_live() -> dict:
         return load_all(c)
 
 
-@st.cache_data
-def load_csv() -> dict:
-    return {n: pd.read_csv(CSV_DIR / f"{n}.csv") for n in NAMES if (CSV_DIR / f"{n}.csv").exists()}
+@st.cache_data(ttl=60)   # short TTL so a new export shows up without restarting the app
+def load_csv(csv_dir: str) -> dict:
+    d = Path(csv_dir)
+    return {n: pd.read_csv(d / f"{n}.csv") for n in NAMES if (d / f"{n}.csv").exists()}
 
 
-def load() -> tuple[dict, str]:
-    if os.getenv("PG_HOST"):
-        try:
-            return load_live(), "Live: Postgres warehouse"
-        except Exception as exc:  # warehouse down or not loaded yet -> fall back to the snapshot
-            st.warning(f"Postgres not available ({type(exc).__name__}), showing the committed snapshot.")
-    return load_csv(), "Snapshot: docs/sample_output"
+def load() -> tuple[dict, str, str | None]:
+    """Returns (data, source label, reason live data was not used)."""
+    if not os.getenv("PG_HOST"):
+        return load_csv(str(CSV_DIR)), "Snapshot: docs/sample_output", None
+    try:
+        return load_live(), "Live: Postgres warehouse", None
+    except Exception as exc:  # warehouse down or not loaded yet -> fall back to the snapshot
+        reason = ("the warehouse tables do not exist yet" if "does not exist" in str(exc)
+                  else f"Postgres is not reachable ({type(exc).__name__})")
+        return load_csv(str(CSV_DIR)), "Snapshot: docs/sample_output", reason
 
 
-data, source = load()
+data, source, live_problem = load()
 if "agg_monthly_sales" not in data:
-    st.error("No data found. Run the pipeline, then the `ecommerce-export-showcase/run` deployment.")
+    st.error(f"No data to show: {live_problem or 'no snapshot in docs/sample_output'}.")
+    st.markdown("1. Open Prefect at http://localhost:4200 and run **`ecommerce-setup/run`** (loads data and runs "
+                "the whole pipeline, about 5 minutes).\n2. Refresh this page.\n3. Optional: run "
+                "**`ecommerce-export-showcase/run`** and commit `docs/sample_output/` so others see the data too.")
     st.stop()
+if live_problem:
+    st.warning(f"Showing the committed snapshot because {live_problem}.")
 
 meta = data["metadata"].iloc[0] if "metadata" in data else {}
 st.title("E-Commerce Analytics Pipeline")
