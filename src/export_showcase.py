@@ -1,7 +1,8 @@
 """Export a small snapshot of the pipeline results to docs/sample_output/ (committed to git), so anyone
 browsing the repo on GitHub can see real output without running the stack.
 
-Writes one CSV per query (GitHub renders CSVs as tables) and a README.md summary.
+Writes one CSV per query (GitHub renders CSVs as tables) and a README.md summary. The Streamlit dashboard
+(dashboard/app.py) reads these CSVs when Postgres is not available, e.g. on Streamlit Community Cloud.
 Usage: python export_showcase.py   (run after the pipeline has loaded data)
 """
 import os
@@ -65,22 +66,29 @@ def md_table(df: pd.DataFrame, max_rows: int = 15) -> str:
     return "\n".join(lines)
 
 
+def load_all(conn) -> dict:
+    """Run every showcase query. Returns {name: DataFrame}; also used by the Streamlit dashboard (live mode)."""
+    data = {"row_counts": pd.DataFrame(
+        [(f"{s}.{t}", int(pd.read_sql(f"SELECT count(*) AS n FROM {s}.{t}", conn)["n"][0])) for s, t in COUNTS],
+        columns=["table", "rows"])}
+    data.update({name: pd.read_sql(sql, conn) for name, (_, sql) in QUERIES.items()})
+    wm = pd.read_sql("SELECT last_watermark FROM control.watermark WHERE table_name='orders'", conn)
+    data["metadata"] = pd.DataFrame([{
+        "exported_at": f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC",
+        "orders_watermark": str(wm["last_watermark"][0]) if len(wm) else "n/a"}])
+    return data
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
-    eng = get_engine()
-    with eng.connect() as c:
-        counts = pd.DataFrame(
-            [(f"{s}.{t}", pd.read_sql(f"SELECT count(*) AS n FROM {s}.{t}", c)["n"][0]) for s, t in COUNTS],
-            columns=["table", "rows"])
-        watermark = pd.read_sql("SELECT last_watermark FROM control.watermark WHERE table_name='orders'", c)
-        results = {name: (desc, pd.read_sql(sql, c)) for name, (desc, sql) in QUERIES.items()}
-
-    counts.to_csv(f"{OUT}/row_counts.csv", index=False)
-    for name, (_, df) in results.items():
+    with get_engine().connect() as c:
+        data = load_all(c)
+    for name, df in data.items():
         df.to_csv(f"{OUT}/{name}.csv", index=False)
         log.info("%s.csv: %d rows", name, len(df))
+    counts, meta = data["row_counts"], data["metadata"].iloc[0]
+    results = {name: (desc, data[name]) for name, (desc, _) in QUERIES.items()}
 
-    wm = watermark["last_watermark"][0] if len(watermark) else "n/a"
     md = [
         "# Sample output",
         "",
@@ -88,8 +96,8 @@ def main():
         "`src/export_showcase.py` (Prefect deployment `ecommerce-export-showcase/run`). "
         "Regenerate it after a run and commit it to refresh this page.",
         "",
-        f"- Exported: {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC",
-        f"- Orders watermark: {wm}",
+        f"- Exported: {meta['exported_at']}",
+        f"- Orders watermark: {meta['orders_watermark']}",
         "",
         "## Row counts per layer",
         "",

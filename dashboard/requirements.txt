@@ -1,0 +1,5 @@
+# Dashboard only (also used by Streamlit Community Cloud). sqlalchemy + psycopg2 are needed for live mode.
+streamlit==1.40.2
+pandas==2.1.4
+sqlalchemy>=2.0.30,<3
+psycopg2-binary==2.9.9

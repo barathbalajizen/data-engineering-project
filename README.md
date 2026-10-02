@@ -22,6 +22,8 @@ Prefect server + UI (:4200)  <--  pipeline container (flows/serve.py) executes t
 ## See the results without running anything
 Browse **[docs/sample_output/](docs/sample_output/README.md)**: row counts per layer, monthly and daily sales, revenue per category, SCD Type 2 customer history and the data-quality results of the latest run, exported from a real run of this pipeline.
 
+**Live dashboard:** _add your Streamlit Community Cloud link here_ (see [Dashboard](#dashboard-streamlit)).
+
 ## Tech stack
 | Layer | Tool |
 |---|---|
@@ -29,7 +31,7 @@ Browse **[docs/sample_output/](docs/sample_output/README.md)**: row counts per l
 | Lake (Bronze / Silver) | Delta Lake 3.2 on PySpark 3.5 (local mode, Java 17) |
 | Gold modelling | dbt-core 1.8 + dbt-postgres (separate virtualenv) |
 | Orchestration | Prefect 3 (server + UI, `serve()` runner) |
-| Dashboard (optional) | Metabase |
+| Dashboard | Streamlit |
 | CI | GitHub Actions: pytest + `dbt parse` |
 
 ## Requirements
@@ -100,10 +102,21 @@ dbt tests (in `models/marts/schema.yml`) check unique/not-null keys and the fact
 
 Each task runs the existing script in `src/` in a subprocess. The scripts still work on their own, and `src/run_pipeline.sh` runs the whole pipeline without Prefect.
 
+## Dashboard (Streamlit)
+[dashboard/app.py](dashboard/app.py) shows KPIs, monthly/daily sales, revenue by category, data-quality checks, rows per layer and SCD2 customer history. It reads live from Postgres when it can, and otherwise from the committed snapshot in `docs/sample_output/`, so it also works with no database at all.
+
+| Where | How |
+|---|---|
+| With the Docker stack (live data) | `docker compose --profile dashboard up -d --build`, then open **http://localhost:8501** |
+| On your machine, no Docker (snapshot) | `pip install -r dashboard/requirements.txt` then `streamlit run dashboard/app.py` |
+| Public link for others (snapshot) | Push to GitHub, then on [share.streamlit.io](https://share.streamlit.io) create an app from this repo with main file `dashboard/app.py`. Put the link at the top of this README. |
+
+To refresh what the public dashboard shows: run the pipeline, run `ecommerce-export-showcase/run`, commit `docs/sample_output/` and push. Streamlit Cloud redeploys automatically.
+
 ## Optional extras
 
 ```bash
-docker compose --profile dashboard up -d      # also start Metabase on http://localhost:3000
+docker compose --profile dashboard up -d      # also start the Streamlit dashboard on http://localhost:8501
 docker compose logs -f pipeline               # runner logs (deployment registration, run start/finish)
 docker compose exec pipeline pytest tests -q  # unit tests
 docker compose exec pipeline bash src/run_pipeline.sh   # whole pipeline without Prefect (debugging)
@@ -112,7 +125,7 @@ docker compose down                           # stop (data kept)
 docker compose down -v                        # stop and delete Postgres + Prefect data
 rm -rf lake/bronze lake/silver                # (Windows: delete the folders) clear the lake
 ```
-Metabase: add a PostgreSQL database with host `postgres`, port `5432`, db `shop`, user `de`, password `de`, then chart `analytics.agg_daily_sales`, `analytics.agg_category_revenue`, `analytics.fact_orders`. From your machine, Postgres is on port **5433** (`de`/`de`/`shop`):
+Query the warehouse yourself: from your machine, Postgres is on port **5433** (user `de`, password `de`, db `shop`):
 ```sql
 SELECT customer_id, customer_city, valid_from, valid_to, is_current
 FROM analytics.dim_customer
@@ -124,7 +137,8 @@ SELECT * FROM audit.dq_log ORDER BY id DESC LIMIT 10;
 ## Project layout
 | Path | Purpose |
 |---|---|
-| `docker-compose.yml`, `Dockerfile.pipeline` | Postgres, Prefect server, pipeline runner (+ optional Metabase). Spark/Delta/Prefect in one virtualenv, dbt in its own |
+| `docker-compose.yml`, `Dockerfile.pipeline` | Postgres, Prefect server, pipeline runner (+ optional dashboard). Spark/Delta/Prefect in one virtualenv, dbt in its own |
+| `dashboard/`, `Dockerfile.dashboard` | Streamlit dashboard (live from Postgres, or from the committed snapshot) |
 | `flows/ecommerce_flows.py` | Pipeline tasks, daily + backfill flows, failure hooks, run-summary artifact |
 | `flows/ops_flows.py` | Setup, simulation, health and skew-demo flows (run from the UI) |
 | `flows/serve.py` | Registers every deployment (schedule, tags) and runs them (`limit=1`) |
@@ -192,5 +206,5 @@ Use **Retry** on the failed flow run in the UI, or the backfill deployment to re
 - **Run stays "Late" or "Scheduled"**: the runner is busy with another run (`limit=1`) or the `pipeline` container is down.
 - **A run fails immediately with missing CSVs**: run `ecommerce-setup/run` first.
 - **Spark out-of-memory / container killed**: raise Docker memory to 8 GB, or lower `n_orders` / `rows`.
-- **Port 5433/4200/4040 already in use**: change the left side of the port mapping in `docker-compose.yml`.
+- **Port 5433/4200/4040/8501 already in use**: change the left side of the port mapping in `docker-compose.yml`.
 - **`init.sql` changes not applied**: it only runs on a fresh volume; use `docker compose down -v`.
