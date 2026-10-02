@@ -1,75 +1,91 @@
-version: '3.8'
-
 services:
   postgres:
-    image: postgres:15-alpine
-    container_name: ecommerce-postgres
+    image: postgres:15
     environment:
-      POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
-      POSTGRES_DB: ${DB_NAME:-ecommerce_db}
-      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
-    ports:
-      - "${DB_PORT:-5432}:5432"
+      POSTGRES_USER: de
+      POSTGRES_PASSWORD: de
+      POSTGRES_DB: shop
+    ports: ["5433:5432"]        # 5433 on your machine, avoids clashing with a local Postgres
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./sql/ddl:/docker-entrypoint-initdb.d
+      - pgdata:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      test: ["CMD-SHELL", "pg_isready -U de -d shop"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Prefect API + UI + scheduler (state kept in SQLite on a named volume)
+  prefect-server:
+    image: de-pipeline:latest   # built by the `pipeline` service below
+    pull_policy: never
+    init: true
+    command: prefect server start --host 0.0.0.0 --port 4200
+    environment:
+      PREFECT_UI_API_URL: http://localhost:4200/api
+      PREFECT_SERVER_ANALYTICS_ENABLED: "false"
+    ports: ["4200:4200"]
+    volumes:
+      - prefect-data:/root/.prefect
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4200/api/health', timeout=3)"]
       interval: 10s
       timeout: 5s
-      retries: 5
-    networks:
-      - ecommerce-network
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
 
-  # Pipeline service (optional, for development)
+  # Runs the pipeline code: registers the two deployments (daily + backfill) and executes their flow runs
   pipeline:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: ecommerce-pipeline
+      dockerfile: Dockerfile.pipeline
+    image: de-pipeline:latest
+    init: true
+    command: python flows/serve.py
+    ports: ["4040:4040"]        # Spark UI (only while a Spark job runs)
+    environment:
+      PREFECT_API_URL: http://prefect-server:4200/api
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      PG_DB: shop
+      PG_USER: de
+      PG_PASSWORD: de
+      LAKE_PATH: /app/lake
+      DATA_PATH: /app/data/raw
+      SPARK_DRIVER_MEMORY: 2g
+      WATERMARK_LOOKBACK_MINUTES: "10"
+      SCHEDULE_TZ: Asia/Kolkata   # timezone of the daily schedule
+      DAILY_CRON: "0 2 * * *"     # 02:00 every day in SCHEDULE_TZ
+      ALERT_WEBHOOK_URL: "${ALERT_WEBHOOK_URL:-}"
+    volumes:
+      - ./flows:/app/flows
+      - ./src:/app/src
+      - ./tests:/app/tests
+      - ./lake:/app/lake
+      - ./data:/app/data
+      - ./dbt_project:/app/dbt_project
     depends_on:
       postgres:
         condition: service_healthy
+      prefect-server:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Optional dashboard, NOT started by default:  docker compose --profile dashboard up -d
+  metabase:
+    profiles: ["dashboard"]
+    image: metabase/metabase:latest
+    ports: ["3000:3000"]
     environment:
-      PG_HOST: postgres
-      PG_PORT: 5432
-      PG_USER: ${DB_USER:-postgres}
-      PG_PASSWORD: ${DB_PASSWORD:-postgres}
-      PG_DATABASE: ${DB_NAME:-ecommerce_db}
-      LOCAL_DATA_LAKE_PATH: /data/delta_lake
+      MB_DB_FILE: /metabase-data/metabase.db
     volumes:
-      - ./data:/app/data:ro
-      - delta_lake_data:/data/delta_lake
-      - ./logs:/app/logs
-    networks:
-      - ecommerce-network
-    profiles:
-      - with-pipeline
-
-  # Optional: pgAdmin for database management
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: ecommerce-pgadmin
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@example.com
-      PGADMIN_DEFAULT_PASSWORD: admin
-    ports:
-      - "5050:80"
+      - metabase-data:/metabase-data
     depends_on:
-      - postgres
-    networks:
-      - ecommerce-network
-    profiles:
-      - with-pgadmin
-
-networks:
-  ecommerce-network:
-    driver: bridge
+      postgres:
+        condition: service_healthy
 
 volumes:
-  postgres_data:
-    driver: local
-  delta_lake_data:
-    driver: local
-
+  pgdata:
+  prefect-data:
+  metabase-data:

@@ -1,0 +1,18 @@
+version: 2
+
+sources:
+  - name: staging
+    schema: staging
+    tables:
+      - name: orders
+        columns:
+          - name: order_id
+            tests: [unique, not_null]
+      - name: customers
+        columns:
+          - name: customer_id
+            tests: [unique, not_null]
+      - name: products
+      - name: sellers
+      - name: order_items
+      - name: order_payments

@@ -1,0 +1,33 @@
+FROM python:3.11-slim-bookworm
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openjdk-17-jre-headless curl procps \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /opt/jars \
+    && curl -fsSL -o /opt/jars/postgresql.jar https://jdbc.postgresql.org/download/postgresql-42.7.3.jar
+
+# Big wheels (pyspark ~300MB) can time out on slow connections with pip's default 15s timeout
+ENV PIP_DEFAULT_TIMEOUT=300 \
+    PIP_RETRIES=10
+
+# Pipeline venv: Spark + Delta + Prefect + helpers (this is the default `python`)
+RUN python -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir \
+       numpy==1.26.4 pandas==2.1.4 "sqlalchemy>=2.0.30,<3" psycopg2-binary==2.9.9 \
+       pyspark==3.5.1 delta-spark==3.2.0 pytest==8.2.2 "prefect>=3.2,<4" tzdata
+
+# dbt venv: isolated so dbt's pinned dependencies can't clash with the rest
+COPY requirements-dbt.txt /tmp/requirements-dbt.txt
+RUN python -m venv /opt/dbt_venv \
+    && /opt/dbt_venv/bin/pip install --no-cache-dir -r /tmp/requirements-dbt.txt
+
+# Pre-download Delta jars at build time so runs work without re-downloading
+RUN python -c "print('warm')" && /opt/venv/bin/python -c "from pyspark.sql import SparkSession; from delta import configure_spark_with_delta_pip as c; b=SparkSession.builder.master('local[1]').config('spark.sql.extensions','io.delta.sql.DeltaSparkSessionExtension').config('spark.sql.catalog.spark_catalog','org.apache.spark.sql.delta.catalog.DeltaCatalog'); c(b).getOrCreate().range(1).count()"
+
+ENV PATH=/opt/venv/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    DBT_PROFILES_DIR=/app/dbt_project \
+    DBT_TARGET_PATH=/tmp/dbt/target \
+    DBT_LOG_PATH=/tmp/dbt/logs
+
+WORKDIR /app

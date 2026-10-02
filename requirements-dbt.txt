@@ -1,0 +1,4 @@
+# Shared by Dockerfile.pipeline and CI.
+# dbt-postgres doesn't cap dbt-core, so pin it: dbt-core 2.x is the Fusion engine, which rejects the postgres adapter.
+dbt-core~=1.8.0
+dbt-postgres==1.8.2

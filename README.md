@@ -1,568 +1,147 @@
-# E-Commerce Sales & Customer Feedback Pipeline
+# E-Commerce Analytics Platform (100% free, runs locally)
 
-An end-to-end data engineering project that ingests order data, product catalogs, and customer reviews from multiple sources, processes them through a medallion architecture (Bronze/Silver/Gold), and powers a real-time sales and sentiment dashboard.
-
-**Status**: ✅ **COMPLETE** - All 8 phases implemented and tested (51/51 tests passing)
-
----
-
-## 🎯 Project Overview
-
-### Business Problem
-A retailer's data lives in three disconnected places:
-- **Daily order exports** (CSV) — sales data
-- **Product catalog API** (JSON) — product info & prices  
-- **Customer reviews** (unstructured text) — feedback
-
-**Solution**: An automated daily pipeline that:
-1. ✅ Ingests all three sources (Phase 1)
-2. ✅ Extracts sentiment from review text (Phase 2)
-3. ✅ Transforms raw → cleaned → modeled data (Phases 3-4)
-4. ✅ Validates quality at every stage (Phase 6)
-5. ✅ Orchestrates with Prefect + scheduling (Phase 5)
-6. ✅ Containerizes with Docker + CI/CD (Phase 7)
-7. ✅ Powers a Streamlit dashboard (Phase 8)
-
----
-
-## 📊 Architecture
+Medallion-architecture pipeline: **Postgres (source) -> Delta Lake Bronze -> Silver -> Postgres staging -> dbt Gold (star schema + SCD2)**.
+You start the stack with **one command** and then run, schedule, monitor and backfill everything from the **Prefect UI**.
 
 ```
-INGESTION (Phase 1)          EXTRACTION (Phase 2)        TRANSFORMATION
-┌──────────────────┐         ┌──────────────────┐         ┌──────────────────┐
-│ Orders CSV       │         │ Reviews CSV      │         │ SENTIMENT ANALYSIS│
-│ (daily batch)    │ ───────→│ (raw feedback)   │ ───────→│ (VADER)           │
-└──────────────────┘         └──────────────────┘         └──────────────────┘
-                                                                     │
-┌──────────────────┐                                                 ↓
-│ Product API      │                                         ┌──────────────────┐
-│ (JSON REST)      │ ────────────────────────────────────────│ BRONZE LAYER     │
-│ (DummyJSON)      │                                         │ (as-is, raw)     │
-└──────────────────┘                                         └──────────────────┘
-                                                                     │
-                        Phases 3-4: Bronze → Silver → Gold          │
-                        ┌─────────────────────────────────┐         │
-                        │ SILVER LAYER (cleaned, typed)   │←────────┘
-                        │ - Standardize formats           │
-                        │ - Deduplicate orders            │
-                        │ - Join reviews to orders        │
-                        │ - Validate data quality         │
-                        └─────────────────────────────────┘
-                                    │
-                                    ↓
-                        ┌─────────────────────────────────┐
-                        │ GOLD LAYER (star schema)        │
-                        │ - fact_orders (line items)      │
-                        │ - dim_product (who/what)        │
-                        │ - dim_customer (who)            │
-                        │ - dim_date (when)               │
-                        └─────────────────────────────────┘
-                                    │
-                                    ↓
-                        ┌─────────────────────────────────┐
-                        │ PostgreSQL (serving layer)      │
-                        │ + Streamlit Dashboard           │
-                        └─────────────────────────────────┘
+Postgres source --(incremental, watermark)--> BRONZE (Delta, raw + metadata)
+                                                 |  dedupe, validate, quarantine, MERGE
+                                               SILVER (Delta)
+                                                 |  Spark JDBC
+                                           Postgres `staging`
+                                                 |  dbt build (models + tests + SCD2 snapshot)
+                                           Postgres `analytics` (GOLD)
+                                                 |
+                                           audit.dq_log (quality checks)
+
+Prefect server + UI (:4200)  <--  pipeline container (flows/serve.py) executes the runs
 ```
 
-**Storage**: Azure Blob Storage / ADLS Gen2 (Bronze/Silver/Gold as Delta Lake)  
-**Compute**: Python + Polars + Prefect  
-**Database**: PostgreSQL (or Azure SQL)  
-**Orchestration**: Prefect (scheduling, retries, alerting)  
-**CI/CD**: GitHub Actions + Azure Container Registry  
+## Requirements
+- Docker Desktop (give it **6 GB+ RAM**: Settings > Resources)
+- ~10 GB free disk, internet for the first build only
 
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-- Python 3.10+
-- uv (fast Python package manager)
-- Docker & Docker Compose (for PostgreSQL)
-- Git
-
-### Setup (5 minutes)
-
-1. **Clone repository & configure:**
-   ```bash
-   git clone <repo-url>
-   cd ecommerce-pipeline
-   cp .env.example .env
-   ```
-
-2. **Install dependencies (uv):**
-   ```bash
-   uv sync --extra dev
-   ```
-
-3. **Start PostgreSQL:**
-   ```bash
-   docker-compose up postgres pgadmin -d
-   # Access pgAdmin: http://localhost:5050
-   ```
-
-4. **Download sample data:**
-   ```bash
-   # Download Olist dataset from Kaggle to data/
-   # Or generate synthetic data:
-   uv run python scripts/generate_sample_data.py
-   ```
-
-5. **Run pipeline:**
-   ```bash
-   uv run python -m src.flows.prefect_flow --run-date 2024-01-15
-   ```
-
-6. **View dashboard:**
-   ```bash
-   uv run streamlit run dashboard/app.py
-   # Opens http://localhost:8501
-   ```
-
----
-
-## 📋 Project Phases
-
-| Phase | Component | Status | Files |
-|-------|-----------|--------|-------|
-| **1** | Ingestion (CSV, API, text) | ✅ | `src/ingestion/*` |
-| **2** | Sentiment extraction (VADER) | ✅ | `src/extraction/review_sentiment.py` |
-| **3** | Bronze → Silver | ✅ | `src/transform/bronze_to_silver.py` |
-| **4** | Silver → Gold (star schema) | ✅ | `src/transform/silver_to_gold.py` |
-| **5** | Prefect orchestration + scheduling | ✅ | `src/flows/prefect_flow.py` |
-| **6** | Testing (51 tests, mocked APIs, E2E) | ✅ | `tests/unit/*`, `tests/integration/*` |
-| **7** | Docker + CI/CD (GH Actions, ACR) | ✅ | `Dockerfile`, `.github/workflows/*` |
-| **8** | Streamlit dashboard + docs | ✅ | `dashboard/app.py`, `docs/*` |
-
----
-
-## 🧪 Testing
-
-### Run All Tests (51 tests)
-```bash
-uv run pytest tests/ -v
-# Unit tests:           39 passing
-# Integration tests:     5 passing  
-# Mocked API tests:      7 passing
-```
-
-### Run Unit Tests Only
-```bash
-uv run pytest tests/unit/ -v --cov=src
-```
-
-### Run Integration Tests
-```bash
-uv run pytest tests/integration/ -v
-```
-
-### Run Specific Test
-```bash
-uv run pytest tests/unit/test_bronze_to_silver.py::test_standardize_orders -v
-```
-
----
-
-## 🐳 Docker
-
-### Run Locally
-```bash
-# Start all services (Postgres + pgAdmin + optional Pipeline)
-docker-compose --profile with-pipeline --profile with-pgadmin up -d
-
-# View logs
-docker-compose logs -f pipeline
-
-# Stop services
-docker-compose down
-```
-
-### Build & Deploy to Azure Container Registry
-See [docs/DOCKER.md](docs/DOCKER.md) for full instructions:
-- Building multi-stage Docker image
-- Deploying to Azure Container Registry
-- CI/CD pipeline with GitHub Actions
-
----
-
-## 📚 Documentation
-
-| Document | Purpose |
-|----------|---------|
-| [DATA_DICTIONARY.md](docs/DATA_DICTIONARY.md) | Schema & data definitions (Bronze/Silver/Gold) |
-| [DOCKER.md](docs/DOCKER.md) | Docker setup & deployment guide |
-| [PREFECT_STEP_BY_STEP.md](docs/PREFECT_STEP_BY_STEP.md) | Prefect flow configuration |
-| [RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) | Production deployment checklist |
-
----
-
-## 🔧 Configuration
-
-### Environment Variables
-See [.env.example](.env.example) for all options:
-```bash
-# Database
-PG_HOST=localhost
-PG_USER=postgres
-PG_PASSWORD=postgres
-
-# Data Lake
-LOCAL_DATA_LAKE_PATH=C:/ecommerce_delta_lake
-
-# Feature Flags
-ENABLE_SENTIMENT_EXTRACTION=true
-ENABLE_DATA_QUALITY_CHECKS=true
-```
-
-### pyproject.toml
-Project metadata, dependencies, and test configuration:
-```bash
-uv run pytest          # Run tests
-uv sync               # Install dependencies
-uv pip list           # View installed packages
-```
-
----
-
-## 📊 Dashboard
-
-Interactive Streamlit dashboard with:
-- 📈 **Revenue trends** by date & category
-- 🏆 **Top/Bottom products** by sales & sentiment
-- 😊 **Sentiment distribution** pie & histogram
-- ⚠️ **Flagged negative reviews** (quality alerts)
+## Start (one command)
 
 ```bash
-uv run streamlit run dashboard/app.py
+cd de-project
+docker compose up -d --build        # first build takes 10-15 min (Java, Spark, Delta, Prefect, dbt)
 ```
+This starts only three services: **postgres**, **prefect-server** and **pipeline** (the runner that executes your flow runs). Then open **http://localhost:4200** and do everything from there. On Linux, if the containers cannot write to `lake/`, run `chmod -R 777 lake` once.
 
-Loads data from Gold layer (Delta Lake). Falls back to sample data in demo mode.
+## Run it from the Prefect UI
 
----
+Open **Deployments**. Each row below is a deployment; click it, then **Run > Custom run** (change parameters) or **Quick run**.
 
-## 🎯 Resume Talking Points
+| Deployment | What it does | Parameters |
+|---|---|---|
+| `ecommerce-setup/run` | **Do this first.** Generates sample CSVs (or uses your own Olist CSVs in `data/raw`), loads the Postgres source, then runs the whole pipeline once. Replaces the source tables, so use it for first setup or a clean restart. | `n_orders` (20000), `generate_csvs`, `run_pipeline_after` |
+| `ecommerce-daily/daily` | The incremental load: Bronze -> Silver -> staging -> dbt -> quality checks. **Scheduled** 02:00 (`SCHEDULE_TZ`, default `Asia/Kolkata`). Run it manually any time. | none |
+| `ecommerce-backfill/backfill` | Re-extract orders with `updated_at` in `[start, end)`, then rebuild downstream. | `start`, `end`, `chunk_days` (31), `rebuild_downstream` |
+| `ecommerce-simulate-changes/run` | Simulate a day of source activity: 200 orders delivered, 100 customers move, 500 new orders. | none |
+| `ecommerce-bronze-health/run` | Logs Bronze/Silver/quarantine counts and the number of duplicate order versions (should be 0). | none |
+| `ecommerce-simulate-bronze-loss/run` | Deletes a window from Bronze, so you can practise recovery with the backfill. | `start`, `end` |
+| `ecommerce-skew-demo/run` | Runs the same join naive, broadcast, salted and with AQE; the comparison table is in the task log. | `rows` (1,000,000), `hot_share`, `salts` |
 
-After completing this project, you can speak to:
+### Suggested first session
+1. Run `ecommerce-setup/run` (defaults). Watch the run's task timeline and logs; open **Artifacts** for the run summary (row counts, watermark, data-quality results).
+2. Run `ecommerce-simulate-changes/run`, then `ecommerce-daily/daily`. The `extract-bronze` log shows only the changed rows (about 700) being picked up, and 100 customers get a second row in `analytics.dim_customer` (SCD Type 2).
+3. Run `ecommerce-daily/daily` again: it inserts 0 new versions. Check with `ecommerce-bronze-health/run` (`DUPLICATE versions=0`). That is idempotency.
+4. Run `ecommerce-bronze-health/run`, then `ecommerce-simulate-bronze-loss/run` with `start=2017-03-01`, `end=2017-04-01`, then health again (fewer rows), then `ecommerce-backfill/backfill` with the same dates, then health again (restored). The orders watermark is untouched by the backfill.
+5. Practise failure handling: start `ecommerce-daily/daily`, then run `docker compose stop postgres` in a terminal while `extract-bronze` is running. The task goes to **AwaitingRetry** and retries after 1, 2, then 4 minutes. Run `docker compose start postgres` before the next attempt and it succeeds.
 
-### 🏗️ Architecture
-- "Designed a medallion architecture (Bronze/Silver/Gold) for data quality progression"
-- "Implemented dimensional modeling with surrogate keys and slowly changing dimensions"
-- "Handled data from three different formats: CSV batch, REST API JSON, unstructured text"
+## How Prefect is used
 
-### 🔄 ETL/ELT
-- "Built transformation pipeline with Polars for type casting, deduplication, and joins"
-- "Applied business logic: sentiment analysis, keyword flagging, data validation"
-- "Scheduled daily runs with Prefect, including backfill capability for missed dates"
+| Need | How |
+|---|---|
+| **Scheduling** | `flows/serve.py` registers `daily` with a cron schedule (`DAILY_CRON`, default `0 2 * * *`, in `SCHEDULE_TZ`; set in `docker-compose.yml`). Pause or edit it on the deployment page. |
+| **Monitoring** | Dashboard (run history, failures), per-run task timeline, retry history, full logs (every script's output is streamed into the run), and a **run-summary artifact** per run under **Artifacts**. |
+| **Alerting** | Failure and crash hooks log an error and post to `ALERT_WEBHOOK_URL` (Slack-compatible webhook) if set. Prefect **Automations** can add more (notify on failure, late or long-running runs). |
+| **Retries** | Each pipeline task retries 3 times, waiting 1, 2, then 4 minutes. The quality-checks task does not retry (bad data is not transient). On a retry, `dbt_build.sh` runs `dbt retry` and resumes from the failed model. |
+| **Backfill** | The window is split into chunks of `chunk_days`; each chunk is its own task with its own retries. Bronze inserts only versions it lacks and the daily watermark is untouched, so rerunning is safe. |
+| **No overlapping runs** | `serve(..., limit=1)`: one flow run at a time. A backfill started at 02:00 makes the daily run wait, then start. |
 
-### 🧪 Quality & Testing
-- "Implemented 51 automated tests: unit, integration, and mocked API calls"
-- "Added data quality checks (schema validation, null checks, referential integrity)"
-- "Achieved 100% test pass rate with continuous integration on every PR"
+Each task runs the existing script in `src/` in a subprocess. The scripts still work on their own, and `src/run_pipeline.sh` runs the whole pipeline without Prefect.
 
-### 🐳 DevOps
-- "Containerized pipeline with multi-stage Docker build (optimized for production)"
-- "Implemented CI/CD with GitHub Actions: lint → test → build → deploy"
-- "Deployed to Azure Container Registry with automated image scanning"
-
-### 📊 Analytics
-- "Built interactive Streamlit dashboard powered by dimensional model"
-- "Enabled self-service analytics with SQL queries against Gold layer"
-- "Surfaced data quality issues automatically (flagged negative reviews)"
-
----
-
-## 🚨 Common Issues
-
-**Q: Tests fail with "griffe < 1" error**  
-A: Prefect 2.14.1 conflicts with griffe 2.x. Run: `pip install 'griffe<1'`
-
-**Q: Docker container can't connect to PostgreSQL**  
-A: Use `postgres` as hostname (Docker network), not `localhost`. Check docker network: `docker network inspect ecommerce-network`
-
-**Q: Delta Lake table not found after running pipeline**  
-A: Ensure LOCAL_DATA_LAKE_PATH environment variable is set and writable
-
-**Q: Streamlit dashboard shows no data**  
-A: Dashboard defaults to sample data if Gold tables unavailable. Run full pipeline first or check Delta Lake path
-
----
-
-## 📈 Next Steps (Scaling)
-
-If building this for production, consider:
-
-- **Cloud Storage**: Use Azure ADLS Gen2 instead of local file system
-- **Compute**: Migrate Python to Apache Spark (PySpark) for larger datasets
-- **Warehouse**: Use Azure Synapse or Snowflake for SQL queries
-- **Orchestration**: Add Apache Airflow or Databricks Workflows
-- **Monitoring**: Integrate with Datadog/New Relic + PagerDuty for alerts
-- **Data Catalog**: Add metadata tracking (Unity Catalog, Collibra)
-- **ML**: Add demand forecasting or recommendation engine on top
-
----
-
-## 📝 License
-
-MIT - See LICENSE file
-
----
-
-## 👤 Author
-
-Created as a portfolio project demonstrating real-world data engineering practices.
-
-**Questions?** Open an issue or contact the maintainer.
-
----
-
-**Last Updated**: August 2024  
-**Pipeline Status**: ✅ Production-Ready
-
-
-# Run the full Prefect flow
-uv run python src/flows/prefect_flow.py
-
-# Run unit tests
-uv run pytest tests/unit -q
-
-# Add a new dependency and re-lock
-uv add <package-name>
-uv lock
-```
-
-### Automation Shortcuts
-
-- Shortcut targets: [Makefile](Makefile)
-- Windows task runner: [scripts/tasks.ps1](scripts/tasks.ps1)
-- CI workflow: [.github/workflows/ci.yml](.github/workflows/ci.yml)
-- Release runbook: [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)
-
-Common targets from [Makefile](Makefile):
+## Optional extras
 
 ```bash
-make sync-dev
-make test
-make flow
-make flow-cloud
+docker compose --profile dashboard up -d      # also start Metabase on http://localhost:3000
+docker compose logs -f pipeline               # runner logs (deployment registration, run start/finish)
+docker compose exec pipeline pytest tests -q  # unit tests
+docker compose exec pipeline bash src/run_pipeline.sh   # whole pipeline without Prefect (debugging)
+docker compose exec pipeline prefect deployment run 'ecommerce-daily/daily'   # CLI alternative to the UI
+docker compose down                           # stop (data kept)
+docker compose down -v                        # stop and delete Postgres + Prefect data
+rm -rf lake/bronze lake/silver                # (Windows: delete the folders) clear the lake
+```
+Metabase: add a PostgreSQL database with host `postgres`, port `5432`, db `shop`, user `de`, password `de`, then chart `analytics.agg_daily_sales`, `analytics.agg_category_revenue`, `analytics.fact_orders`. From your machine, Postgres is on port **5433** (`de`/`de`/`shop`):
+```sql
+SELECT customer_id, customer_city, valid_from, valid_to, is_current
+FROM analytics.dim_customer
+WHERE customer_id IN (SELECT customer_id FROM analytics.dim_customer GROUP BY 1 HAVING count(*) > 1)
+ORDER BY customer_id, valid_from LIMIT 10;
+SELECT * FROM audit.dq_log ORDER BY id DESC LIMIT 10;
 ```
 
-Windows PowerShell shortcuts:
+## Project layout
+| Path | Purpose |
+|---|---|
+| `docker-compose.yml`, `Dockerfile.pipeline` | Postgres, Prefect server, pipeline runner (+ optional Metabase). Spark/Delta/Prefect in one virtualenv, dbt in its own |
+| `flows/ecommerce_flows.py` | Pipeline tasks, daily + backfill flows, failure hooks, run-summary artifact |
+| `flows/ops_flows.py` | Setup, simulation, health and skew-demo flows (run from the UI) |
+| `flows/serve.py` | Registers every deployment (schedule, tags) and runs them (`limit=1`) |
+| `flows/trigger_backfill.py` | Optional: start a backfill from the command line |
+| `sql/init.sql` | Schemas, watermark control table, `audit.dq_log` |
+| `src/extract_bronze.py` | Incremental (orders) + full extracts -> Delta Bronze; `--start/--end` for backfill |
+| `src/transform_silver.py`, `transforms.py` | Trim, dedupe, validate, quarantine, MERGE, skew helpers |
+| `src/load_warehouse.py` | Silver -> Postgres staging (Spark JDBC) |
+| `dbt_project/` | Gold star schema, SCD2 snapshot, tests |
+| `src/checks.py` | Reconciliation + quality checks -> audit log |
+| `src/windowing.py`, `src/resilience.py` | Extract window, backfill chunking, retry helper (pure Python, unit tested) |
+| `src/dbt_build.sh`, `src/run_pipeline.sh` | dbt wrapper (`dbt retry` on later attempts); whole pipeline without Prefect |
+| `src/generate_sample_data.py`, `load_source.py`, `simulate_changes.py` | Sample data and the simulated OLTP source |
+| `src/bronze_stats.py`, `simulate_bronze_loss.py`, `skew_demo.py` | Demo helpers (wrapped by the ops flows) |
+| `tests/`, `.github/workflows/ci.yml` | pytest unit tests; CI runs them on every push |
 
-```powershell
-.\scripts\tasks.ps1 sync-dev
-.\scripts\tasks.ps1 test
-.\scripts\tasks.ps1 flow
-.\scripts\tasks.ps1 flow-cloud
-```
+## Idempotency, retries and backfill
 
-Prefect Cloud helpers:
+| Concern | How it is handled |
+|---|---|
+| Rerun / crash after the Bronze write but before the watermark update | Bronze `orders` is written with an **insert-if-not-exists MERGE** on `(order_id, updated_at)`; the rerun inserts 0 rows. |
+| Late-committed rows near the watermark | **Overlap window**: each run re-reads from `watermark - 10 min` (`WATERMARK_LOOKBACK_MINUTES`); the MERGE absorbs the repeats. The watermark never moves backwards. |
+| Silver / Gold reruns | Silver `orders` MERGE (newer `updated_at` wins), other tables overwritten, staging truncated and reloaded, dbt rebuilds. Quarantine is rewritten each run (no pile-up). |
+| Transient failures | Prefect task retries with backoff, plus `retry()` around database calls inside scripts. |
+| dbt failure mid-build | On a retry, `dbt_build.sh` runs `dbt retry` and resumes from the failed node. |
+| Missed schedule (runner was down) | Runs that were due stay scheduled and start once the runner is back. Loads are watermark-based and idempotent, so repeated catch-up runs are cheap and safe. |
 
-```powershell
-.\scripts\tasks.ps1 cloud-status
-.\scripts\tasks.ps1 cloud-login
-.\scripts\tasks.ps1 cloud-use
-```
+## Runbook (what to do when a task fails)
+Open the failed flow run in the UI, then the failed task's logs (script output and the last lines of the error).
 
-## 🏗️ Architecture
+| Failing task | Likely cause | Action |
+|---|---|---|
+| `extract-bronze` | Source down / DB credentials | Check Postgres is healthy; rerun. The watermark moves only after a successful write. |
+| `transform-silver` | Schema change, out of memory | Read the log; raise `SPARK_DRIVER_MEMORY`; MERGE is idempotent, so rerun. |
+| `load-warehouse` | Postgres connection | Rerun (table is truncated and reloaded). |
+| `dbt-build` | A dbt test failed | The log names the test. Inspect the rows, fix upstream, rerun. |
+| `quality-checks` | Reconciliation mismatch | Open the run's summary artifact or query `audit.dq_log`. Not retried automatically. |
 
-```
-┌─────────────────────────────────────────┐
-│  DATA SOURCES                           │
-├─────────────────────────────────────────┤
-│ • Orders (CSV)                          │
-│ • Products (REST API)                   │
-│ • Reviews (Unstructured Text)           │
-└──────────────────┬──────────────────────┘
-                   │
-        ┌──────────▼──────────┐
-        │  BRONZE (Raw Data)  │
-        │  Raw landing zone   │
-        └──────────┬──────────┘
-                   │
-        ┌──────────▼──────────┐
-        │ SILVER (Cleaned)    │
-        │ Typed, deduplicated │
-        │ Sentiment extracted │
-        └──────────┬──────────┘
-                   │
-        ┌──────────▼──────────┐
-        │  GOLD (Analytics)   │
-        │ Star schema + SQL   │
-        └──────────┬──────────┘
-                   │
-        ┌──────────▼──────────┐
-        │   Dashboard         │
-        │   Streamlit         │
-        └─────────────────────┘
-```
+Use **Retry** on the failed flow run in the UI, or the backfill deployment to reprocess a window. To reprocess everything, set `last_watermark` to `1900-01-01` and run the daily deployment.
 
-## 📊 What's Included
+## Design notes (good interview talking points)
+- **Idempotent**: Bronze MERGE on `(order_id, updated_at)`, Silver MERGE keyed on `order_id` updating only when `s.updated_at >= t.updated_at`.
+- **Incremental**: the watermark moves only after the Bronze write succeeds, with a 10-minute overlap. Limitations: a row that changes without bumping `updated_at` is invisible, and deletes are not captured. Real fix: CDC (Debezium).
+- **SCD2** uses a dbt `timestamp` snapshot on `customers.updated_at`; `fact_orders` joins the customer version valid at purchase time.
+- **Quarantine**, not silent drops: invalid rows go to `lake/silver/_quarantine/<table>` with a reason.
+- **Data skew**: the pipeline itself does not hit it (joins run in Postgres via dbt on uniform data); the skew demo shows the problem and the fixes (broadcast, salting, AQE).
+- **Scaling path**: Spark local -> Databricks/EMR, local folders -> S3/ADLS, Postgres -> Snowflake/Redshift/BigQuery, `serve` -> a Prefect work pool with Docker/Kubernetes workers. The flow code stays the same.
+- **Simplifications vs production**: single environment; secrets in compose env vars (use a secrets manager); Prefect server on SQLite (use Postgres); runner container is root; Silver is recomputed from all of Bronze each run.
 
-### Phase 0 - Setup ✅
-- [x] Project structure
-- [x] Environment configuration
-- [x] Star schema DDL
-- [x] Logging utility
-
-### Phase 1 - Ingestion ✅
-- [x] Orders CSV loader with retry logic
-- [x] Product REST API client (DummyJSON)
-- [x] Reviews loader with validation
-- [x] Bronze layer partitioning strategy
-
-### Phase 2 - Coming Soon
-- [ ] Sentiment analysis (TextBlob/VADER)
-- [ ] Keyword extraction from reviews
-- [ ] Silver layer transformations
-
-## 🚀 Usage
-
-### Run Ingestion Pipeline
-
-```bash
-# Load orders from CSV
-uv run python src/ingestion/orders_loader.py
-
-# Fetch products from API
-uv run python src/ingestion/product_api_client.py
-
-# Load reviews from CSV
-uv run python src/ingestion/reviews_loader.py
-```
-
-### Run Tests
-
-```bash
-# Unit tests only
-uv run pytest tests/unit/
-
-# With coverage
-uv run pytest tests/ --cov=src/
-```
-
-## 📝 Technology Stack
-
-| Layer | Technology | Why |
-|-------|-----------|-----|
-| Ingestion | Python + requests | Direct, familiar |
-| Transformation | Pandas + Polars | Industry standard |
-| Storage | Local filesystem now, Azure ADLS Gen2 later | Works without a cloud account while preserving medallion layers |
-| Orchestration | Prefect | Professional workflow management |
-| Data Quality | Pandera | Schema validation at every stage |
-| Database | PostgreSQL | Reliable OLTP serving layer |
-| Dashboard | Streamlit | Fast prototyping and deployment |
-| CI/CD | GitHub Actions | Free and integrated |
-| Testing | pytest | Standard Python testing |
-
-## 📚 Project Structure
-
-```
-ecommerce-pipeline/
-├── config/              # Configuration files
-├── src/
-│   ├── ingestion/       # Data loading modules
-│   ├── extraction/      # Sentiment & keyword extraction
-│   ├── transform/       # Bronze→Silver→Gold transformations
-│   ├── quality/         # Data quality checks
-│   ├── storage/         # Local/Azure storage helpers
-│   ├── db/              # Database models and loaders
-│   └── utils/           # Logging and utilities
-├── flows/               # Prefect orchestration
-├── tests/               # Unit and integration tests
-├── sql/                 # SQL DDL and queries
-├── dashboard/           # Streamlit app
-├── docker/              # Docker configuration
-├── docs/                # Documentation
-└── README.md            # This file
-```
-
-## 🔄 Data Flow
-
-### Orders
-```
-CSV File → Load → Validate Schema → Standardize Types → Bronze (local CSV)
-```
-
-### Products
-```
-REST API → Fetch (with retry) → Parse JSON → DataFrame → Bronze (local CSV)
-```
-
-### Reviews
-```
-CSV File → Load → Clean Text → Validate → Bronze (local CSV) →
-Extract Sentiment → Silver (local CSV)
-```
-
-## ✅ Quality Checks
-
-Data quality is enforced at multiple stages:
-
-- **Ingestion**: Schema validation, null checks
-- **Transformation**: Data type consistency, range validation
-- **Loading**: Deduplication, referential integrity
-
-## 🧪 Testing
-
-```bash
-# Run all tests
-uv run pytest
-
-# Run specific test file
-uv run pytest tests/unit/test_orders_loader.py
-
-# Run with verbose output
-uv run pytest -v
-
-# Generate coverage report
-uv run pytest --cov=src/ --cov-report=html
-```
-
-## 🔐 Environment Variables
-
-See `.env.example` for all available options:
-
-```bash
-STORAGE_PROVIDER=local
-LOCAL_DATA_LAKE_PATH=C:/ecommerce_delta_lake
-LOCAL_STORAGE_FORMAT=delta
-DB_HOST=localhost
-DB_PORT=5432
-LOG_LEVEL=INFO
-```
-
-## 📖 Key Concepts Demonstrated
-
-- **Medallion Architecture**: Bronze (raw) → Silver (clean) → Gold (analytics)
-- **Data Validation**: Pandera schema validation across pipeline stages
-- **Unstructured Data**: Sentiment extraction from free-text reviews
-- **Star Schema**: Dimensional modeling for analytics (fact_orders + dimensions)
-- **Idempotency**: Safe re-runs with deduplication
-- **Retry Logic**: Resilient API calls with exponential backoff
-- **Logging**: Structured JSON logging for observability
-- **Testing**: Unit tests with mocked dependencies
-
-## 🎓 Interview Topics This Covers
-
-- ETL pipeline design and implementation
-- Handling multiple data formats and sources
-- Data quality and validation strategies
-- Dimensional modeling for analytics
-- Orchestration and scheduling
-- Containerization and CI/CD
-- Testing strategies for data pipelines
-- How would you scale to 500 stores?
-- How do you handle pipeline failures?
-- What metrics would you monitor in production?
-
-## 📄 License
-
-MIT License - see LICENSE file for details
-
-## 👤 Contact
-
-For questions or feedback about this project, please open an issue on GitHub.
-
----
-
-**Status**: Phase 0 & 1 Complete ✅ | Next: Phase 2 (Sentiment Extraction)
+## Troubleshooting
+- **Build fails downloading** Java/jars/packages: check your internet; re-run `docker compose build`.
+- **Deployments missing in the UI**: `docker compose logs pipeline` (it waits for the server to be healthy, then registers them). `docker compose restart pipeline` retries.
+- **Run stays "Late" or "Scheduled"**: the runner is busy with another run (`limit=1`) or the `pipeline` container is down.
+- **A run fails immediately with missing CSVs**: run `ecommerce-setup/run` first.
+- **Spark out-of-memory / container killed**: raise Docker memory to 8 GB, or lower `n_orders` / `rows`.
+- **Port 5433/4200/4040 already in use**: change the left side of the port mapping in `docker-compose.yml`.
+- **`init.sql` changes not applied**: it only runs on a fresh volume; use `docker compose down -v`.
