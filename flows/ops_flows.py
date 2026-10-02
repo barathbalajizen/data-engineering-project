@@ -38,6 +38,11 @@ def simulate_bronze_loss(start: str, end: str):
     run_cmd([PY, f"{SRC}/simulate_bronze_loss.py", "--start", start, "--end", end])
 
 
+@task(name="export-showcase", retries=2, retry_delay_seconds=30)
+def export_showcase():
+    run_cmd([PY, f"{SRC}/export_showcase.py"])
+
+
 @task(name="skew-demo", retries=0)
 def skew_demo(rows: int, hot_share: float, salts: int):
     run_cmd([PY, f"{SRC}/skew_demo.py", "--rows", str(rows), "--hot-share", str(hot_share),
@@ -84,3 +89,10 @@ def skew_join_demo(rows: int = 1_000_000, hot_share: float = 0.6, salts: int = 1
     """Data-skew demo: the same join run naive, broadcast, salted and with Spark AQE. The comparison table
     is in the task log. Use a smaller `rows` if the container runs out of memory."""
     skew_demo(rows, hot_share, salts)
+
+
+@flow(name="ecommerce-export-showcase", **HOOKS)
+def export_showcase_flow():
+    """Export a snapshot of the Gold results to docs/sample_output/ (CSVs + README.md). Commit that folder so
+    people browsing the repo on GitHub can see the output without running the pipeline."""
+    export_showcase()

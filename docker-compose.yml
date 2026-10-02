@@ -35,7 +35,7 @@ services:
       start_period: 20s
     restart: unless-stopped
 
-  # Runs the pipeline code: registers the two deployments (daily + backfill) and executes their flow runs
+  # Runs the pipeline code: registers all deployments (see flows/serve.py) and executes their flow runs
   pipeline:
     build:
       context: .
@@ -65,6 +65,7 @@ services:
       - ./lake:/app/lake
       - ./data:/app/data
       - ./dbt_project:/app/dbt_project
+      - ./docs:/app/docs            # export-showcase writes docs/sample_output here
     depends_on:
       postgres:
         condition: service_healthy

@@ -19,6 +19,9 @@ Postgres source --(incremental, watermark)--> BRONZE (Delta, raw + metadata)
 Prefect server + UI (:4200)  <--  pipeline container (flows/serve.py) executes the runs
 ```
 
+## See the results without running anything
+Browse **[docs/sample_output/](docs/sample_output/README.md)**: row counts per layer, monthly and daily sales, revenue per category, SCD Type 2 customer history and the data-quality results of the latest run, exported from a real run of this pipeline.
+
 ## Tech stack
 | Layer | Tool |
 |---|---|
@@ -54,6 +57,7 @@ Open **Deployments**. Each row below is a deployment; click it, then **Run > Cus
 | `ecommerce-simulate-changes/run` | Simulate a day of source activity: 200 orders delivered, 100 customers move, 500 new orders. | none |
 | `ecommerce-bronze-health/run` | Logs Bronze/Silver/quarantine counts and the number of duplicate order versions (should be 0). | none |
 | `ecommerce-simulate-bronze-loss/run` | Deletes a window from Bronze, so you can practise recovery with the backfill. | `start`, `end` |
+| `ecommerce-export-showcase/run` | Exports a snapshot of the Gold results to `docs/sample_output/` (CSVs + `README.md`). Commit that folder to publish the results on GitHub. | none |
 | `ecommerce-skew-demo/run` | Runs the same join naive, broadcast, salted and with AQE; the comparison table is in the task log. | `rows` (1,000,000), `hot_share`, `salts` |
 
 ### Suggested first session
@@ -61,7 +65,8 @@ Open **Deployments**. Each row below is a deployment; click it, then **Run > Cus
 2. Run `ecommerce-simulate-changes/run`, then `ecommerce-daily/daily`. The `extract-bronze` log shows only the changed rows (about 700) being picked up, and 100 customers get a second row in `analytics.dim_customer` (SCD Type 2).
 3. Run `ecommerce-daily/daily` again: it inserts 0 new versions. Check with `ecommerce-bronze-health/run` (`DUPLICATE versions=0`). That is idempotency.
 4. Run `ecommerce-bronze-health/run`, then `ecommerce-simulate-bronze-loss/run` with `start=2017-03-01`, `end=2017-04-01`, then health again (fewer rows), then `ecommerce-backfill/backfill` with the same dates, then health again (restored). The orders watermark is untouched by the backfill.
-5. Practise failure handling: start `ecommerce-daily/daily`, then run `docker compose stop postgres` in a terminal while `extract-bronze` is running. The task goes to **AwaitingRetry** and retries after 1, 2, then 4 minutes. Run `docker compose start postgres` before the next attempt and it succeeds.
+5. Run `ecommerce-export-showcase/run`, then commit `docs/sample_output/` so the results show on GitHub.
+6. Practise failure handling: start `ecommerce-daily/daily`, then run `docker compose stop postgres` in a terminal while `extract-bronze` is running. The task goes to **AwaitingRetry** and retries after 1, 2, then 4 minutes. Run `docker compose start postgres` before the next attempt and it succeeds.
 
 ### Using the real Olist dataset (optional)
 By default the setup flow generates synthetic data with the same file names and columns as the [Kaggle Olist dataset](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce). To use the real data instead, put these files in `data/raw/` (they are git-ignored) and run `ecommerce-setup/run` with `generate_csvs=false`:
@@ -134,6 +139,7 @@ SELECT * FROM audit.dq_log ORDER BY id DESC LIMIT 10;
 | `src/dbt_build.sh`, `src/run_pipeline.sh` | dbt wrapper (`dbt retry` on later attempts); whole pipeline without Prefect |
 | `src/generate_sample_data.py`, `load_source.py`, `simulate_changes.py` | Sample data and the simulated OLTP source |
 | `src/bronze_stats.py`, `simulate_bronze_loss.py`, `skew_demo.py` | Demo helpers (wrapped by the ops flows) |
+| `src/export_showcase.py`, `docs/sample_output/` | Exports a result snapshot (CSV + Markdown) that is committed, so the repo shows real output |
 | `tests/`, `.github/workflows/ci.yml` | pytest unit tests; CI runs them and `dbt parse` on every push and pull request |
 
 ## Running the tests without Docker
