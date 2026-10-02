@@ -1,5 +1,7 @@
 # E-Commerce Analytics Platform (100% free, runs locally)
 
+[![ci](https://github.com/barathbalajizen/data-engineering-project/actions/workflows/ci.yml/badge.svg)](https://github.com/barathbalajizen/data-engineering-project/actions/workflows/ci.yml)
+
 Medallion-architecture pipeline: **Postgres (source) -> Delta Lake Bronze -> Silver -> Postgres staging -> dbt Gold (star schema + SCD2)**.
 You start the stack with **one command** and then run, schedule, monitor and backfill everything from the **Prefect UI**.
 
@@ -17,6 +19,16 @@ Postgres source --(incremental, watermark)--> BRONZE (Delta, raw + metadata)
 Prefect server + UI (:4200)  <--  pipeline container (flows/serve.py) executes the runs
 ```
 
+## Tech stack
+| Layer | Tool |
+|---|---|
+| Source (OLTP) and warehouse | PostgreSQL 15 |
+| Lake (Bronze / Silver) | Delta Lake 3.2 on PySpark 3.5 (local mode, Java 17) |
+| Gold modelling | dbt-core 1.8 + dbt-postgres (separate virtualenv) |
+| Orchestration | Prefect 3 (server + UI, `serve()` runner) |
+| Dashboard (optional) | Metabase |
+| CI | GitHub Actions: pytest + `dbt parse` |
+
 ## Requirements
 - Docker Desktop (give it **6 GB+ RAM**: Settings > Resources)
 - ~10 GB free disk, internet for the first build only
@@ -24,7 +36,8 @@ Prefect server + UI (:4200)  <--  pipeline container (flows/serve.py) executes t
 ## Start (one command)
 
 ```bash
-cd de-project
+git clone https://github.com/barathbalajizen/data-engineering-project.git
+cd data-engineering-project
 docker compose up -d --build        # first build takes 10-15 min (Java, Spark, Delta, Prefect, dbt)
 ```
 This starts only three services: **postgres**, **prefect-server** and **pipeline** (the runner that executes your flow runs). Then open **http://localhost:4200** and do everything from there. On Linux, if the containers cannot write to `lake/`, run `chmod -R 777 lake` once.
@@ -49,6 +62,25 @@ Open **Deployments**. Each row below is a deployment; click it, then **Run > Cus
 3. Run `ecommerce-daily/daily` again: it inserts 0 new versions. Check with `ecommerce-bronze-health/run` (`DUPLICATE versions=0`). That is idempotency.
 4. Run `ecommerce-bronze-health/run`, then `ecommerce-simulate-bronze-loss/run` with `start=2017-03-01`, `end=2017-04-01`, then health again (fewer rows), then `ecommerce-backfill/backfill` with the same dates, then health again (restored). The orders watermark is untouched by the backfill.
 5. Practise failure handling: start `ecommerce-daily/daily`, then run `docker compose stop postgres` in a terminal while `extract-bronze` is running. The task goes to **AwaitingRetry** and retries after 1, 2, then 4 minutes. Run `docker compose start postgres` before the next attempt and it succeeds.
+
+### Using the real Olist dataset (optional)
+By default the setup flow generates synthetic data with the same file names and columns as the [Kaggle Olist dataset](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce). To use the real data instead, put these files in `data/raw/` (they are git-ignored) and run `ecommerce-setup/run` with `generate_csvs=false`:
+
+`olist_customers_dataset.csv`, `olist_orders_dataset.csv`, `olist_order_items_dataset.csv`, `olist_order_payments_dataset.csv`, `olist_products_dataset.csv`, `olist_sellers_dataset.csv`
+
+## Gold data model (`analytics` schema)
+
+| Model | Grain / content |
+|---|---|
+| `fact_orders` | One row per order item: price, freight, `delivery_days`, `is_late`. Joined to the customer version valid at purchase time (point-in-time SCD2). |
+| `fact_payments` | One row per order payment (`payment_sequential`): type and value |
+| `dim_customer` | SCD Type 2 from the `customers_snapshot` dbt snapshot (`valid_from`, `valid_to`, `is_current`) |
+| `dim_product`, `dim_seller` | One row per product / seller (surrogate key = `md5` of the natural key) |
+| `dim_date` | Calendar 2016-2030, `date_key` = `YYYYMMDD` |
+| `agg_daily_sales` | Orders, items, revenue, freight, late deliveries per day (canceled orders excluded) |
+| `agg_category_revenue` | Orders, revenue and average delivery days per product category |
+
+dbt tests (in `models/marts/schema.yml`) check unique/not-null keys and the fact-to-dimension relationships; they run as part of every `dbt build`.
 
 ## How Prefect is used
 
@@ -102,7 +134,18 @@ SELECT * FROM audit.dq_log ORDER BY id DESC LIMIT 10;
 | `src/dbt_build.sh`, `src/run_pipeline.sh` | dbt wrapper (`dbt retry` on later attempts); whole pipeline without Prefect |
 | `src/generate_sample_data.py`, `load_source.py`, `simulate_changes.py` | Sample data and the simulated OLTP source |
 | `src/bronze_stats.py`, `simulate_bronze_loss.py`, `skew_demo.py` | Demo helpers (wrapped by the ops flows) |
-| `tests/`, `.github/workflows/ci.yml` | pytest unit tests; CI runs them on every push |
+| `tests/`, `.github/workflows/ci.yml` | pytest unit tests; CI runs them and `dbt parse` on every push and pull request |
+
+## Running the tests without Docker
+The unit tests cover the pure-Python and Spark transform logic and do not need Postgres. You need Python 3.11 and Java 17 (same as CI):
+
+```bash
+pip install pyspark==3.5.1 pytest==8.2.2
+pytest tests -q
+
+pip install -r requirements-dbt.txt                       # optional: validate the dbt project
+DBT_PROFILES_DIR=dbt_project dbt parse --project-dir dbt_project
+```
 
 ## Idempotency, retries and backfill
 
