@@ -31,3 +31,11 @@ ENV PATH=/opt/venv/bin:$PATH \
     DBT_LOG_PATH=/tmp/dbt/logs
 
 WORKDIR /app
+
+# Application code (production runs this; in development docker-compose.yml bind-mounts the same folders over it)
+COPY flows /app/flows
+COPY src /app/src
+COPY sql /app/sql
+COPY dbt_project /app/dbt_project
+COPY dashboard /app/dashboard
+COPY tests /app/tests

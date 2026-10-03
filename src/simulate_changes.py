@@ -40,8 +40,10 @@ ids = [f"new{tag}_{i:04d}" for i in range(n)]
 orders = pd.DataFrame({
     "order_id": ids, "customer_id": cust, "order_status": "delivered",
     "order_purchase_timestamp": purchase,
-    "order_delivered_customer_date": [p + timedelta(days=int(d)) for p, d in zip(purchase, rng.integers(3, 20, n))],
-    "order_estimated_delivery_date": [p + timedelta(days=int(d)) for p, d in zip(purchase, rng.integers(10, 30, n))],
+    "order_delivered_customer_date": [p + timedelta(days=int(d))
+                                      for p, d in zip(purchase, rng.integers(3, 20, n), strict=True)],
+    "order_estimated_delivery_date": [p + timedelta(days=int(d))
+                                      for p, d in zip(purchase, rng.integers(10, 30, n), strict=True)],
     "updated_at": now,
 })
 items = pd.DataFrame({

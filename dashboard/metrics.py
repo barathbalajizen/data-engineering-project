@@ -64,7 +64,7 @@ def task_durations_by_run(task_runs: pd.DataFrame, flow_runs: pd.DataFrame, flow
     runs = flow_runs[flow_runs["flow_name"] == flow_name].sort_values("start_ts").tail(last)
     t = task_runs[(task_runs["pipeline_run_id"].isin(runs["pipeline_run_id"])) & (task_runs["status"] == "SUCCESS")]
     labels = {rid: pd.to_datetime(ts).strftime("%m-%d %H:%M")
-              for rid, ts in zip(runs["pipeline_run_id"], runs["start_ts"])}
+              for rid, ts in zip(runs["pipeline_run_id"], runs["start_ts"], strict=False)}
     out = t.assign(run_label=t["pipeline_run_id"].map(labels),
                    minutes=(t["duration_seconds"].astype(float) / 60).round(2))
     return out[["run_label", "task_name", "minutes"]]

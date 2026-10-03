@@ -22,8 +22,7 @@ from delta.tables import DeltaTable
 from pyspark.sql import functions as F
 
 from audit import audit_step, delta_version, delta_write_counts, make_batch_id
-from common import (RUN_ID, bronze_path, get_engine, get_logger, get_spark, quarantine_path, silver_path,
-                    sized_for_write)
+from common import RUN_ID, bronze_path, get_engine, get_logger, get_spark, quarantine_path, silver_path, sized_for_write
 from delta_utils import cdf_enabled_since, is_delta, read_changes, schema_evolution
 from incremental import FULL, INCREMENTAL, SKIP, PgCheckpointStore, decide_mode
 from transforms import classify_versions, clean_strings, dedupe_latest

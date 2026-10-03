@@ -13,7 +13,7 @@ import logging
 import os
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 log = logging.getLogger("audit")
 MAX_ERROR_CHARS = 4000
@@ -21,7 +21,7 @@ MAX_ERROR_CHARS = 4000
 
 def make_batch_id(table, now=None):
     """Unique, readable batch id, e.g. orders-20261003T101500-1a2b3c4d."""
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     return f"{table}-{now:%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:8]}"
 
 

@@ -1,0 +1,22 @@
+# Tooling configuration (the project itself is run with Docker, not installed as a package)
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["dbt_project", "lake", "data", "docs"]
+
+[tool.ruff.lint]
+# pycodestyle errors/warnings, pyflakes, import sorting, bugbear (likely bugs), pyupgrade
+select = ["E", "W", "F", "I", "B", "UP"]
+ignore = [
+    "B008",   # function calls in defaults (Prefect/argparse idioms)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["audit", "checkpoints", "common", "delta_utils", "export_showcase", "incremental", "metrics",
+                     "migrate", "pipeline_plan", "resilience", "schema_drift", "transforms", "validation",
+                     "windowing", "dbt_results", "maintenance", "benchmark", "extract_bronze", "transform_silver",
+                     "ecommerce_flows", "ops_flows", "delta_tools"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

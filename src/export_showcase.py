@@ -9,7 +9,7 @@ audit schema.
 Usage: python export_showcase.py   (Prefect deployment ecommerce-export-showcase/run)
 """
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pandas as pd
 
@@ -135,7 +135,7 @@ def load_all(eng) -> dict:
         watermark = str(wm["last_watermark"][0]) if len(wm) else "n/a"
     except Exception:
         watermark = "n/a"
-    data["metadata"] = pd.DataFrame([{"exported_at": f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC",
+    data["metadata"] = pd.DataFrame([{"exported_at": f"{datetime.now(UTC):%Y-%m-%d %H:%M} UTC",
                                       "orders_watermark": watermark}])
     return data
 

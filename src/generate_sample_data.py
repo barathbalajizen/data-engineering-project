@@ -18,7 +18,8 @@ os.makedirs(DATA, exist_ok=True)
 CITIES = ["sao paulo", "rio de janeiro", "belo horizonte", "curitiba", "salvador", "recife", "brasilia", "porto alegre"]
 STATES = ["SP", "RJ", "MG", "PR", "BA", "PE", "DF", "RS"]
 CATS = ["health_beauty", "computers", "furniture", "toys", "sports_leisure", "housewares",
-        "auto", "watches_gifts", "bed_bath_table", "garden_tools", "perfumery", "books", "pet_shop", "baby", "electronics"]
+        "auto", "watches_gifts", "bed_bath_table", "garden_tools", "perfumery", "books", "pet_shop", "baby",
+        "electronics"]
 STATUS = ["delivered", "shipped", "processing", "canceled", "approved"]
 STATUS_P = [0.90, 0.04, 0.02, 0.02, 0.02]
 
@@ -73,7 +74,8 @@ pay = items.groupby("order_id").agg(p=("price", "sum"), f=("freight_value", "sum
 payments = pd.DataFrame({
     "order_id": pay["order_id"],
     "payment_sequential": 1,
-    "payment_type": rng.choice(["credit_card", "boleto", "voucher", "debit_card"], len(pay), p=[0.74, 0.19, 0.05, 0.02]),
+    "payment_type": rng.choice(["credit_card", "boleto", "voucher", "debit_card"], len(pay),
+                               p=[0.74, 0.19, 0.05, 0.02]),
     "payment_value": np.round(pay["p"] + pay["f"], 2),
 })
 

@@ -16,45 +16,57 @@ A batch data platform for an online store, built end to end. It **extracts** ord
 
 ## Highlights
 
-- **Incremental loading** with a watermark and an overlap window: only new or changed rows are read, and late rows are not missed.
-- **Idempotent at every layer** (Delta `MERGE`, truncate-and-reload, dbt rebuild): reruns and retries never create duplicates.
-- **Medallion architecture** on Delta Lake: raw Bronze, cleaned and validated Silver, modelled Gold.
-- **Star schema + SCD Type 2** in dbt: customer history is kept, and each order joins the customer version valid at purchase time.
-- **Data quality**: invalid rows are quarantined with a reason (never silently dropped), and reconciliation checks run after every load and are logged to `audit.dq_log`.
-- **Orchestration with Prefect**: daily schedule, retries with backoff, failure alerts, run summaries, parameterised backfills, no overlapping runs.
-- **Recovery**: a chunked backfill rebuilds any lost date range without touching the daily watermark.
-- **Performance**: a data-skew demo comparing a naive join with broadcast, salting and Spark AQE.
-- **Tested**: 17 pytest unit tests plus dbt tests, run by GitHub Actions on every push and pull request.
+- **Incremental loading:** a watermark with an overlap window, Delta Change Data Feed into Silver, and incremental dbt facts. Each layer processes only what changed, and late-arriving records are still picked up.
+- **Idempotent at every layer:** Delta `MERGE`, checkpoints that move only after a successful write, and delete+insert facts. Reruns, retries and backfills never create duplicates.
+- **Schema drift handling:** new source columns evolve Bronze, Silver and staging. Removed columns and type changes stop the load and are recorded.
+- **Data quality:** named validation rules with a quarantine that lists every failed rule; 70 dbt tests; reconciliation per key and version and of business metrics; and a **scorecard** for every run.
+- **Star schema + SCD Type 2** in dbt, with staging and intermediate layers and tested business aggregates (AOV, cohort retention, product sales).
+- **Orchestration and recovery with Prefect:** schedules, retries, alerts, **partial reruns and resume-from-failure** found in the audit log, and chunked backfills.
+- **Audit and lineage:** every run, task attempt and table load is logged with row counts, durations, retries and errors. Source → target lineage includes Delta versions, and checkpoint history is written by a database trigger.
+- **Measured performance tuning:** benchmarks at 1x and 10x, including a dbt incremental model that went from not finishing in 17 min to 3.3 s ([docs/performance.md](docs/performance.md)).
+- **Dashboard** for business KPIs, pipeline operations and data quality.
+- **DevOps:** dev/prod configurations with no hardcoded credentials; CI with lint, unit tests, SQL validation on Postgres, image builds and an end-to-end run; 128 pytest tests.
 
 ---
 
 ## Architecture
 
+```mermaid
+flowchart LR
+    subgraph SRC["PostgreSQL source (simulated OLTP)"]
+        S[(source.*)]
+    end
+    subgraph LAKE["Delta Lake (local folders, PySpark)"]
+        B[("Bronze<br/>raw + metadata<br/>CDF on orders")]
+        SV[("Silver<br/>validated, deduplicated")]
+        Q[("Quarantine<br/>rejected rows + reasons")]
+    end
+    subgraph WH["PostgreSQL warehouse"]
+        STG[(staging.*<br/>Spark JDBC landing)]
+        DBT["dbt: analytics_stg (views)<br/>analytics_int (views)"]
+        GOLD[("analytics.*<br/>star schema, SCD2,<br/>incremental facts, aggregates")]
+        AUD[("audit.* / control.*<br/>run log, lineage, DQ log, scorecard,<br/>schema changes, rejections,<br/>watermark, checkpoints")]
+    end
+    S -- "watermark + overlap<br/>schema-drift check" --> B
+    B -- "Change Data Feed<br/>since checkpoint" --> SV
+    B -. "invalid rows" .-> Q
+    SV -- "batched, parallel JDBC" --> STG
+    STG --> DBT --> GOLD
+    GOLD --> DASH["Streamlit dashboard<br/>business / operations / data quality"]
+    AUD --> DASH
+    PF["Prefect server + runner<br/>schedules, retries, resume,<br/>alerts, run summaries"] -. "orchestrates every step" .-> B
+    PF -.-> AUD
 ```
- ┌──────────────────┐   incremental extract     ┌──────────────────────┐
- │ Postgres source  │ ── (watermark + overlap) ─▶│ BRONZE  (Delta Lake) │  raw rows + ingestion metadata
- │ (simulated OLTP) │                            └──────────┬───────────┘
- └──────────────────┘                                       │ trim, dedupe, validate, MERGE
-                                                            ▼
-                         invalid rows ◀── quarantine ┌──────────────────────┐
-                                                     │ SILVER  (Delta Lake) │  clean, one row per key
-                                                     └──────────┬───────────┘
-                                                                │ Spark JDBC
-                                                                ▼
-                                                     ┌──────────────────────┐
-                                                     │ Postgres `staging`   │
-                                                     └──────────┬───────────┘
-                                                                │ dbt build (models + tests + SCD2 snapshot)
-                                                                ▼
-                                                     ┌──────────────────────┐
-                                                     │ GOLD `analytics`     │──▶ Streamlit dashboard
-                                                     │ star schema + aggs   │
-                                                     └──────────┬───────────┘
-                                                                ▼
-                                                     quality checks → audit.dq_log
 
- Prefect server + UI (:4200)  ◀──  pipeline container runs every step on schedule or on demand
-```
+Details: [docs/architecture.md](docs/architecture.md) (layers, audit tables, deployments, design decisions, scaling path).
+
+| Document | Contents |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | Architecture, data model, audit and lineage tables, design decisions and trade-offs |
+| [docs/deployment.md](docs/deployment.md) | Setup, configuration reference, dev vs prod, production checklist, CI |
+| [docs/performance.md](docs/performance.md) | Measured benchmarks and tuning decisions |
+| [docs/implementation_status.md](docs/implementation_status.md) | Every requirement, where it is implemented, how it was verified, and known limitations |
+| [docs/sample_output/](docs/sample_output/README.md) | Exported results of a real run |
 
 ---
 
@@ -67,8 +79,8 @@ A batch data platform for an online store, built end to end. It **extracts** ord
 | Transformation & modelling | dbt-core 1.8 (dbt-postgres) |
 | Orchestration | Prefect 3 |
 | Dashboard | Streamlit |
-| Testing & CI | pytest, dbt tests, GitHub Actions |
-| Infrastructure | Docker, Docker Compose |
+| Testing & CI | pytest (128 tests), dbt tests (70), ruff, GitHub Actions |
+| Infrastructure | Docker, Docker Compose (dev and prod configurations) |
 
 ---
 
@@ -197,9 +209,10 @@ All datasets are defined once in [`export_showcase.py`](src/export_showcase.py).
 ```bash
 git clone https://github.com/barathbalajizen/data-engineering-project.git
 cd data-engineering-project
+cp .env.example .env          # configuration and credentials (git-ignored); edit if you like
 docker compose up -d --build
 ```
-The first build takes 10–15 minutes (Java, Spark, Delta, Prefect, dbt). It starts three services: `postgres`, `prefect-server` and `pipeline`. On Linux, if the containers cannot write to `lake/`, run `chmod -R 777 lake` once.
+The first build takes 10–15 minutes (Java, Spark, Delta, Prefect, dbt). It starts three services: `postgres`, `prefect-server` and `pipeline`. Without a `.env`, Compose stops and asks for one, because credentials have no defaults. On Linux, if the containers cannot write to `lake/`, run `chmod -R 777 lake` once. For production (code baked into images, no published database port, JSON logs) see [docs/deployment.md](docs/deployment.md).
 
 ### Step 2: Open Prefect
 Go to **http://localhost:4200** → **Deployments**. To run one, click it, then **Run → Quick run** (or **Custom run** to change parameters).
@@ -263,15 +276,25 @@ SELECT * FROM audit.dq_log ORDER BY id DESC LIMIT 10;
 
 ## Testing
 
-The project has **17 pytest unit tests** for the core logic and **dbt tests** on the Gold models. GitHub Actions runs pytest and `dbt parse` on every push and pull request.
+The project has **128 pytest tests** (unit and integration) and **70 dbt tests**. GitHub Actions runs lint, unit tests, SQL validation on a real Postgres, Docker image builds and a full end-to-end run ([docs/deployment.md](docs/deployment.md#continuous-integration)).
 
-| Test file | What it checks |
+| Unit tests (no database needed) | What they check |
 |---|---|
-| [`test_transforms.py`](tests/test_transforms.py) | Deduplication keeps the latest version; valid/invalid split for quarantine; string trimming |
-| [`test_windowing.py`](tests/test_windowing.py) | Extract window: watermark overlap, first run, backfill windows ignore the watermark, invalid ranges rejected |
-| [`test_split_window.py`](tests/test_split_window.py) | Backfill chunking: consecutive chunks with no gaps, last chunk clipped, bad inputs rejected |
-| [`test_resilience.py`](tests/test_resilience.py) | Retry helper succeeds after transient failures and gives up after the limit |
-| [`test_skew.py`](tests/test_skew.py) | Salted join gives the same result as a plain join and spreads the hot key; hot-key detection |
+| [`test_transforms.py`](tests/test_transforms.py), [`test_validation.py`](tests/test_validation.py) | Trimming, deduplication, validation rules and the reasons a row was rejected |
+| [`test_schema_drift.py`](tests/test_schema_drift.py) | Drift detection and the evolve / cast / reject policy |
+| [`test_incremental.py`](tests/test_incremental.py) | Incremental Silver mode decisions, version classification (new / newer / late), reconciliation |
+| [`test_windowing.py`](tests/test_windowing.py), [`test_split_window.py`](tests/test_split_window.py) | Extract windows with overlap; backfill chunking |
+| [`test_pipeline_plan.py`](tests/test_pipeline_plan.py) | Step order, partial runs, resume point after a failure |
+| [`test_audit.py`](tests/test_audit.py), [`test_dbt_results.py`](tests/test_dbt_results.py) | Audit rows, batch ids, Delta metrics, migrations order; dbt results into the DQ log |
+| [`test_maintenance.py`](tests/test_maintenance.py), [`test_dashboard_metrics.py`](tests/test_dashboard_metrics.py) | Compaction decision, file sizing, JDBC writers; dashboard calculations |
+| [`test_resilience.py`](tests/test_resilience.py), [`test_skew.py`](tests/test_skew.py) | Retry helper; salted join |
+
+| Integration tests ([`tests/integration`](tests/integration), need the stack) | What they check |
+|---|---|
+| `test_bronze_delta.py` | Real Bronze writes on a temporary Delta lake: schema evolution, casts, rejections, Change Data Feed, time travel |
+| `test_silver_incremental.py` | Incremental Silver: skip, late arrivals, invalid newer versions, idempotent quarantine, full refresh, deletes |
+| `test_flow_resume.py` | The real daily flow on a temporary Prefect server: order, partial runs, failure and resume |
+| `test_audit_pg.py`, `test_checkpoints_pg.py`, `test_dq_scorecard_pg.py` | Migrations, audit rows, monotonic watermark and its history trigger, run views, DQ scorecard |
 
 ### Run the tests in Docker (easiest)
 With the stack running:
@@ -305,24 +328,28 @@ DBT_PROFILES_DIR=dbt_project dbt parse --project-dir dbt_project
 ## Project structure
 
 ```
-├── flows/                   Prefect flows and deployments
-│   ├── ecommerce_flows.py     daily + backfill flows, retries, alerts, run summary
-│   ├── ops_flows.py           setup, simulation, health, skew and export flows
-│   └── serve.py               registers all deployments and the daily schedule
-├── src/                     pipeline scripts (each also runs on its own)
-│   ├── extract_bronze.py      incremental extract → Bronze
-│   ├── transform_silver.py    clean, validate, quarantine, MERGE → Silver
-│   ├── load_warehouse.py      Silver → Postgres staging
-│   ├── checks.py              data quality and reconciliation checks
-│   ├── export_showcase.py     export results to docs/sample_output
-│   └── ...                    data generation, simulations, helpers
-├── dbt_project/             Gold star schema, SCD2 snapshot, dbt tests
-├── dashboard/               Streamlit dashboard
-├── tests/                   pytest unit tests
-├── sql/init.sql             schemas, watermark table, audit log
-├── docs/sample_output/      exported results (visible on GitHub)
-├── docker-compose.yml       Postgres, Prefect, pipeline runner, dashboard
-└── .github/workflows/       CI: pytest + dbt parse
+├── flows/                       Prefect flows and deployments
+│   ├── ecommerce_flows.py         daily (partial runs, resume) + backfill flows, retries, alerts, run summary
+│   ├── ops_flows.py               setup, simulations, health, maintenance, Delta inspect, export, skew demo
+│   └── serve.py                   registers all deployments and schedules
+├── src/                         pipeline scripts (each also runs on its own)
+│   ├── extract_bronze.py          incremental extract + schema drift check → Bronze
+│   ├── transform_silver.py        validate, quarantine, incremental MERGE (CDF) → Silver
+│   ├── load_warehouse.py          Silver → Postgres staging (batched, parallel JDBC)
+│   ├── checks.py                  reconciliation, business metrics, freshness → audit.dq_log
+│   ├── audit.py, migrate.py       run log, lineage, rejections; database migrations
+│   ├── schema_drift.py, validation.py, incremental.py, pipeline_plan.py, checkpoints.py
+│   ├── maintenance.py             OPTIMIZE / VACUUM;  benchmark*.py: performance measurements
+│   └── ...                        data generation, simulations, Delta tools, helpers
+├── dbt_project/                 staging + intermediate views, star schema, SCD2 snapshot, 70 tests
+├── dashboard/                   Streamlit dashboard (business, operations, data quality)
+├── tests/                       pytest unit tests; tests/integration/ (need the stack)
+├── sql/                         init.sql and numbered migrations
+├── scripts/e2e_test.sh          end-to-end test of the whole stack (used by CI)
+├── docs/                        architecture, deployment, performance, implementation status, sample output
+├── docker-compose.yml           development stack;  docker-compose.prod.yml: production overrides
+├── .env.example, .env.prod.example   configuration templates (copy to .env / .env.prod)
+└── .github/workflows/ci.yml     CI: lint, unit tests, SQL validation, image builds, end-to-end
 ```
 
 ---
@@ -334,7 +361,7 @@ DBT_PROFILES_DIR=dbt_project dbt parse --project-dir dbt_project
 - **SCD2 with a point-in-time join**: reports show the customer's city *at the time of the order*, not today's city.
 - **Prefect tasks run scripts in subprocesses**: each Spark job gets a clean JVM, and the scripts still run without Prefect (`src/run_pipeline.sh`).
 - **Scaling path**: local Spark → Databricks/EMR, local folders → S3/ADLS, Postgres → Snowflake/BigQuery, Prefect `serve` → work pools on Docker/Kubernetes. The flow code stays the same.
-- **Simplified on purpose**: a single environment, credentials in compose environment variables (a secrets manager in production), Prefect on SQLite, and Silver recomputed from all of Bronze each run.
+- **Known limitations**: source deletes are not captured (needs CDC); everything runs on one machine (local Spark, Delta on local folders, Prefect on SQLite); the Prefect UI and dashboard have no authentication of their own. Full list, with all design decisions: [docs/architecture.md](docs/architecture.md) and [docs/implementation_status.md](docs/implementation_status.md#known-limitations).
 
 ---
 

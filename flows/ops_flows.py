@@ -7,8 +7,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from prefect import flow, task  # noqa: E402
 
-from ecommerce_flows import (HOOKS, PY, SRC, flow_audit, migrate_db,  # noqa: E402
-                             publish_run_summary, run_cmd, run_pipeline_steps)
+from ecommerce_flows import (  # noqa: E402
+    HOOKS,
+    PY,
+    SRC,
+    flow_audit,
+    migrate_db,
+    publish_run_summary,
+    run_cmd,
+    run_pipeline_steps,
+)
 
 
 @task(name="generate-sample-data", retries=0)

@@ -97,6 +97,7 @@ def failed_step_hint(run_id):
     """'failed at <step>; resume with ...' from the audit log (best effort, never raises)."""
     try:
         import sqlalchemy as sa
+
         from common import get_engine
 
         eng = get_engine()
@@ -174,8 +175,9 @@ def publish_run_summary(kind: str, details: dict | None = None):
     log = get_run_logger()
     try:
         import sqlalchemy as sa
-        from common import get_engine
         from prefect.artifacts import create_markdown_artifact
+
+        from common import get_engine
 
         eng = get_engine()
 
@@ -196,7 +198,8 @@ def publish_run_summary(kind: str, details: dict | None = None):
                       "WHERE run_id = :r", r=flow_run.id)
         facts = [("Flow run", f"{flow_run.name} (`{flow_run.id}`)"), ("Run type", kind)]
         facts += list((details or {}).items())
-        facts += [("Orders watermark", scalar("SELECT last_watermark FROM control.watermark WHERE table_name='orders'")),
+        facts += [("Orders watermark",
+                   scalar("SELECT last_watermark FROM control.watermark WHERE table_name='orders'")),
                   ("source.orders rows", scalar("SELECT count(*) FROM source.orders")),
                   ("staging.orders rows", scalar("SELECT count(*) FROM staging.orders")),
                   ("analytics.fact_orders rows", scalar("SELECT count(*) FROM analytics.fact_orders"))]
@@ -228,6 +231,7 @@ def publish_run_summary(kind: str, details: dict | None = None):
 def find_resume_point() -> str | None:
     """First step that did not succeed in the latest daily run, or None when that run succeeded."""
     import sqlalchemy as sa
+
     from common import get_engine
 
     log = get_run_logger()

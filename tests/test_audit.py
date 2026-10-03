@@ -1,6 +1,6 @@
 """Unit tests for the audit helpers and the migration ordering (no Postgres or Spark needed)."""
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -33,7 +33,7 @@ class FakeWriter:
 
 # ----------------------------------------------------------------- batch ids
 def test_batch_id_is_readable_and_unique():
-    now = datetime(2026, 10, 3, 10, 15, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 10, 3, 10, 15, 0, tzinfo=UTC)
     a, b = make_batch_id("orders", now), make_batch_id("orders", now)
     assert re.fullmatch(r"orders-20261003T101500-[0-9a-f]{8}", a)
     assert a != b

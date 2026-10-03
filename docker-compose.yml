@@ -1,3 +1,17 @@
+# Local / development stack. Configuration comes from .env (copy .env.example to .env first);
+# credentials have no defaults here and compose stops with a message when they are missing.
+# Production: docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod up -d
+# (see docs/deployment.md).
+
+x-warehouse-env: &warehouse-env
+  PG_HOST: postgres
+  PG_PORT: "5432"
+  PG_DB: ${PG_DB:-shop}
+  PG_USER: ${PG_USER:?PG_USER is not set - copy .env.example to .env}
+  PG_PASSWORD: ${PG_PASSWORD:?PG_PASSWORD is not set - copy .env.example to .env}
+  APP_ENV: ${APP_ENV:-dev}
+  LOG_FORMAT: ${LOG_FORMAT:-text}
+
 services:
   postgres:
     image: postgres:15
@@ -5,18 +19,21 @@ services:
     # ("could not resize shared memory segment ... No space left on device"), see docs/performance.md
     shm_size: 256mb
     environment:
-      POSTGRES_USER: de
-      POSTGRES_PASSWORD: de
-      POSTGRES_DB: shop
-    ports: ["5433:5432"]        # 5433 on your machine, avoids clashing with a local Postgres
+      # Only used when the volume is created; to change the password of an existing database run
+      # ALTER USER in Postgres, then update .env (docs/deployment.md)
+      POSTGRES_USER: ${PG_USER:?PG_USER is not set - copy .env.example to .env}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?PG_PASSWORD is not set - copy .env.example to .env}
+      POSTGRES_DB: ${PG_DB:-shop}
+    ports: ["${PG_HOST_PORT:-5433}:5432"]   # 5433 on your machine, avoids clashing with a local Postgres
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U de -d shop"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   # Prefect API + UI + scheduler (state kept in SQLite on a named volume)
   prefect-server:
@@ -25,9 +42,9 @@ services:
     init: true
     command: prefect server start --host 0.0.0.0 --port 4200
     environment:
-      PREFECT_UI_API_URL: http://localhost:4200/api
+      PREFECT_UI_API_URL: http://localhost:${PREFECT_PORT:-4200}/api
       PREFECT_SERVER_ANALYTICS_ENABLED: "false"
-    ports: ["4200:4200"]
+    ports: ["${PREFECT_PORT:-4200}:4200"]
     volumes:
       - prefect-data:/root/.prefect
     healthcheck:
@@ -48,29 +65,39 @@ services:
     command: python flows/serve.py
     ports: ["4040:4040"]        # Spark UI (only while a Spark job runs)
     environment:
+      <<: *warehouse-env
       PREFECT_API_URL: http://prefect-server:4200/api
-      PG_HOST: postgres
-      PG_PORT: "5432"
-      PG_DB: shop
-      PG_USER: de
-      PG_PASSWORD: de
       LAKE_PATH: /app/lake
       DATA_PATH: /app/data/raw
-      SPARK_DRIVER_MEMORY: 2g
-      WATERMARK_LOOKBACK_MINUTES: "10"
-      SCHEDULE_TZ: Asia/Kolkata   # timezone of the daily schedule
-      DAILY_CRON: "0 2 * * *"     # 02:00 every day in SCHEDULE_TZ
-      ALERT_WEBHOOK_URL: "${ALERT_WEBHOOK_URL:-}"
+      SCHEDULE_TZ: ${SCHEDULE_TZ:-Asia/Kolkata}
+      DAILY_CRON: ${DAILY_CRON:-0 2 * * *}
+      MAINTENANCE_CRON: ${MAINTENANCE_CRON:-0 3 * * 0}
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      WATERMARK_LOOKBACK_MINUTES: ${WATERMARK_LOOKBACK_MINUTES:-10}
+      SCHEMA_DRIFT_ALLOW_REMOVED_COLUMNS: ${SCHEMA_DRIFT_ALLOW_REMOVED_COLUMNS:-false}
+      SILVER_FULL_REFRESH: ${SILVER_FULL_REFRESH:-false}
+      BRONZE_LOG_RETENTION: ${BRONZE_LOG_RETENTION:-interval 30 days}
+      BRONZE_FILE_RETENTION: ${BRONZE_FILE_RETENTION:-interval 7 days}
+      DELTA_ROWS_PER_FILE: ${DELTA_ROWS_PER_FILE:-1000000}
+      SPARK_DRIVER_MEMORY: ${SPARK_DRIVER_MEMORY:-2g}
+      SPARK_MASTER: ${SPARK_MASTER:-local[2]}
+      SPARK_SHUFFLE_PARTITIONS: ${SPARK_SHUFFLE_PARTITIONS:-8}
+      JDBC_FETCH_SIZE: ${JDBC_FETCH_SIZE:-10000}
+      JDBC_BATCH_SIZE: ${JDBC_BATCH_SIZE:-10000}
+      JDBC_WRITE_PARTITIONS: ${JDBC_WRITE_PARTITIONS:-4}
     volumes:
+      # Code is baked into the image (production); in development these mounts shadow it, so edits apply
+      # without a rebuild
       - ./flows:/app/flows
       - ./src:/app/src
       - ./tests:/app/tests
-      - ./lake:/app/lake
-      - ./data:/app/data
       - ./dbt_project:/app/dbt_project
       - ./sql:/app/sql              # sql/migrations, applied by src/migrate.py at the start of each flow
-      - ./docs:/app/docs            # export-showcase writes docs/sample_output here
       - ./dashboard:/app/dashboard  # so the test suite can also test the dashboard helpers
+      # Data
+      - ./lake:/app/lake
+      - ./data:/app/data
+      - ./docs:/app/docs            # export-showcase writes docs/sample_output here
     depends_on:
       postgres:
         condition: service_healthy
@@ -85,13 +112,9 @@ services:
       context: .
       dockerfile: Dockerfile.dashboard
     image: de-dashboard:latest
-    ports: ["8501:8501"]
+    ports: ["${DASHBOARD_PORT:-8501}:8501"]
     environment:
-      PG_HOST: postgres
-      PG_PORT: "5432"
-      PG_DB: shop
-      PG_USER: de
-      PG_PASSWORD: de
+      <<: *warehouse-env
       SHOWCASE_DIR: /app/docs/sample_output
     volumes:
       - ./dashboard:/app/dashboard
@@ -100,6 +123,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   pgdata:

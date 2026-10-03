@@ -5,13 +5,28 @@ import os
 
 import sqlalchemy as sa
 
+# Credentials have no defaults: they come from the environment (.env via docker compose, see .env.example)
 PG = {
     "host": os.getenv("PG_HOST", "postgres"),
     "port": os.getenv("PG_PORT", "5432"),
     "db": os.getenv("PG_DB", "shop"),
-    "user": os.getenv("PG_USER", "de"),
-    "password": os.getenv("PG_PASSWORD", "de"),
+    "user": os.getenv("PG_USER"),
+    "password": os.getenv("PG_PASSWORD"),
 }
+APP_ENV = os.getenv("APP_ENV", "dev")
+
+
+class ConfigError(RuntimeError):
+    """A required setting is missing from the environment."""
+
+
+def require_credentials():
+    missing = [f"PG_{k.upper()}" for k in ("user", "password") if not PG[k]]
+    if missing:
+        raise ConfigError(f"{', '.join(missing)} not set: copy .env.example to .env (docker compose) "
+                          "or export them before running the scripts")
+
+
 LAKE = os.getenv("LAKE_PATH", "/app/lake")
 DATA = os.getenv("DATA_PATH", "/app/data/raw")
 RUN_ID = os.getenv("RUN_ID", "manual")
@@ -35,7 +50,8 @@ class JsonFormatter(logging.Formatter):
     """One JSON object per line (LOG_FORMAT=json), with run and task ids for log search tools."""
 
     def format(self, record):
-        out = {"ts": self.formatTime(record), "level": record.levelname, "run_id": RUN_ID, "task": TASK_NAME,
+        out = {"ts": self.formatTime(record), "level": record.levelname, "env": APP_ENV, "run_id": RUN_ID,
+               "task": TASK_NAME,
                "logger": record.name, "msg": record.getMessage()}
         if record.exc_info:
             out["exc"] = self.formatException(record.exc_info)
@@ -55,6 +71,7 @@ def get_logger(name: str) -> logging.Logger:
 
 
 def get_engine():
+    require_credentials()
     url = (
         f"postgresql+psycopg2://{PG['user']}:{PG['password']}"
         f"@{PG['host']}:{PG['port']}/{PG['db']}"
@@ -85,6 +102,7 @@ def get_spark(app_name: str, ui: bool = False):
 
 
 def jdbc_read(spark, dbtable: str):
+    require_credentials()
     return (
         spark.read.format("jdbc")
         .option("url", JDBC_URL)
@@ -105,6 +123,7 @@ def jdbc_write_partitions(rows: int) -> int:
 
 def jdbc_write_overwrite(df, dbtable: str, rows: int | None = None):
     # truncate=true keeps the table definition (and its indexes) and just empties it
+    require_credentials()
     if rows is not None:
         df = df.repartition(jdbc_write_partitions(rows))
     (

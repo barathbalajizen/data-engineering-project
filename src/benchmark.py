@@ -162,7 +162,7 @@ def bench_shuffle(spark, rec, scale, repeat):
         out = bench_path(f"shuffle_{parts}")
         spark.conf.set("spark.sql.shuffle.partitions", str(parts))
 
-        def work():
+        def work(out=out):   # bind the loop value (the closure is called within this iteration anyway)
             latest, invalid, _, _ = validate(base, SPECS["orders"])
             latest.write.format("delta").mode("overwrite").save(out)
             latest.unpersist()
@@ -223,7 +223,7 @@ def bench_extract_read(spark, eng, rec, scale, repeat):
     window = f"(SELECT * FROM {src} WHERE updated_at >= TIMESTAMP '{max_ts}' - INTERVAL '10 minutes') q"
     for variant, dbtable, fetch in (("full, fetchsize default", src, None), ("full, fetchsize=10000", src, 10000),
                                     ("incremental window (10 min)", window, None)):
-        def work():
+        def work(dbtable=dbtable, fetch=fetch):
             df = jdbc_reader(spark, dbtable, fetch)
             df.write.format("delta").mode("overwrite").save(out)
             return spark.read.format("delta").load(out).count()
@@ -240,7 +240,7 @@ def bench_jdbc_write(spark, eng, rec, scale, repeat):
         c.execute(sa.text(f"DROP TABLE IF EXISTS {target}"))
     for parts in (1, 2, 4):
         for batch in (1000, 10000, 50000):
-            def work():
+            def work(parts=parts, batch=batch):
                 (df.repartition(parts).write.format("jdbc").option("url", JDBC_URL).option("dbtable", target)
                  .option("user", PG["user"]).option("password", PG["password"])
                  .option("driver", "org.postgresql.Driver").option("truncate", "true")
@@ -274,11 +274,16 @@ def main():
             shutil.rmtree(LAKE, ignore_errors=True)
             for case in a.only:
                 t0 = time.perf_counter()
-                {"silver": lambda: bench_silver(spark, rec, scale, a.repeat),
-                 "extract_read": lambda: bench_extract_read(spark, eng, rec, scale, a.repeat),
-                 "jdbc_write": lambda: bench_jdbc_write(spark, eng, rec, scale, a.repeat),
-                 "shuffle": lambda: bench_shuffle(spark, rec, scale, a.repeat),
-                 "small_files": lambda: bench_small_files(spark, rec, scale, a.repeat)}[case]()
+                if case == "silver":
+                    bench_silver(spark, rec, scale, a.repeat)
+                elif case == "extract_read":
+                    bench_extract_read(spark, eng, rec, scale, a.repeat)
+                elif case == "jdbc_write":
+                    bench_jdbc_write(spark, eng, rec, scale, a.repeat)
+                elif case == "shuffle":
+                    bench_shuffle(spark, rec, scale, a.repeat)
+                else:
+                    bench_small_files(spark, rec, scale, a.repeat)
                 log.info("case %s x%d done in %.0fs", case, scale, time.perf_counter() - t0)
                 shutil.rmtree(LAKE, ignore_errors=True)
     finally:

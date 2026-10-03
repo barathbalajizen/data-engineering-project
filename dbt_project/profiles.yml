@@ -5,8 +5,8 @@ ecommerce:
       type: postgres
       host: "{{ env_var('PG_HOST', 'postgres') }}"
       port: "{{ env_var('PG_PORT', '5432') | as_number }}"
-      user: "{{ env_var('PG_USER', 'de') }}"
-      password: "{{ env_var('PG_PASSWORD', 'de') }}"
+      user: "{{ env_var('PG_USER') }}"           # no defaults: credentials come from the environment (.env)
+      password: "{{ env_var('PG_PASSWORD') }}"
       dbname: "{{ env_var('PG_DB', 'shop') }}"
       schema: "{{ env_var('DBT_SCHEMA', 'analytics') }}"   # DBT_SCHEMA=... builds a separate copy (e.g. to verify)
       threads: 2

@@ -16,6 +16,7 @@ Every result has a category for the scorecard (audit.dq_scorecard).
 import sys
 
 import sqlalchemy as sa
+
 from common import RUN_ID, bronze_path, get_engine, get_logger, get_spark, jdbc_read, quarantine_path, silver_path
 from delta_utils import is_delta
 from resilience import retry

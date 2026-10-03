@@ -20,8 +20,16 @@ from prefect import serve
 from prefect.schedules import Cron
 
 from ecommerce_flows import backfill_pipeline, daily_pipeline
-from ops_flows import (bronze_health, bronze_loss, delta_inspect_flow, export_showcase_flow,
-                       lake_maintenance_flow, setup_demo_data, simulate_source_changes, skew_join_demo)
+from ops_flows import (
+    bronze_health,
+    bronze_loss,
+    delta_inspect_flow,
+    export_showcase_flow,
+    lake_maintenance_flow,
+    setup_demo_data,
+    simulate_source_changes,
+    skew_join_demo,
+)
 
 if __name__ == "__main__":
     tz = os.getenv("SCHEDULE_TZ", "Asia/Kolkata")

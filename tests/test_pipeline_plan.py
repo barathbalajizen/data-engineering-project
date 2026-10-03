@@ -22,7 +22,7 @@ def test_invalid_plans_are_rejected(start, stop):
 
 def test_dependencies_follow_the_step_order():
     assert DEPENDS_ON[STEPS[0]] is None
-    assert all(DEPENDS_ON[b] == a for a, b in zip(STEPS, STEPS[1:]))
+    assert all(DEPENDS_ON[b] == a for a, b in zip(STEPS, STEPS[1:], strict=False))
 
 
 def test_resume_from_failed_step():

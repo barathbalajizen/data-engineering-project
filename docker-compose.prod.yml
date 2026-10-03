@@ -1,0 +1,27 @@
+# Production overrides, applied on top of docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod up -d --build
+# Differences from development (docs/deployment.md):
+#   - code comes from the image, not from bind mounts (what was built and tested is what runs)
+#   - Postgres and the Spark UI are not published on the host; only the containers reach Postgres
+#   - JSON logs, restart always, dashboard always on
+services:
+  postgres:
+    ports: !reset []
+    restart: always
+
+  prefect-server:
+    restart: always
+
+  pipeline:
+    ports: !reset []
+    restart: always
+    volumes: !override
+      - ./lake:/app/lake
+      - ./data:/app/data
+      - ./docs:/app/docs
+
+  dashboard:
+    profiles: !reset []
+    restart: always
+    volumes: !override
+      - ./docs:/app/docs

@@ -93,7 +93,8 @@ def main():
         results.append((name, secs, n, mx, med))
         log.info("finished %s in %.1fs", name, secs)
 
-    print("\n%-16s %8s %11s %12s %12s %11s" % ("variant", "time(s)", "partitions", "max rows", "median rows", "max/median"))
+    print("\n%-16s %8s %11s %12s %12s %11s"
+          % ("variant", "time(s)", "partitions", "max rows", "median rows", "max/median"))
     for name, secs, n, mx, med in results:
         if n is None:
             print("%-16s %8.1f %11s %12s %12s %11s" % (name, secs, "runtime", "see UI", "see UI", "n/a"))

@@ -1,6 +1,35 @@
 name: ci
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Throwaway credentials for the CI databases only (not secrets: nothing outside the runner uses them)
+env:
+  PG_USER: ci
+  PG_PASSWORD: ci
+  PG_DB: shop
+
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff==0.6.9
+      - run: ruff check .
+      - name: Compose files are valid (dev and prod)
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod.example config --quiet
+
   unit-tests:
     runs-on: ubuntu-latest
     steps:
@@ -12,19 +41,80 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install pyspark==3.5.1 pytest==8.2.2
-      - run: pytest tests -q
+      - run: pip install pyspark==3.5.1 pytest==8.2.2 pandas==2.1.4
+      # Integration tests skip themselves here (no Postgres / Delta / Prefect); the e2e job runs them
+      - run: pytest tests -q -rs
 
-  # Validates the dbt project with the same pinned dbt as the Docker image (no database needed for parse)
-  dbt-parse:
+  # SQL validation against a real, empty Postgres: init.sql + every migration (twice: they must be
+  # idempotent), then the dbt project is parsed and compiled (renders every model and test to SQL)
+  sql:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: shop
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci -d shop" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
+      PG_HOST: localhost
+      PG_PORT: "5432"
+      PGPASSWORD: ci
       DBT_PROFILES_DIR: ${{ github.workspace }}/dbt_project
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -r requirements-dbt.txt
-      - run: dbt --version
+      - run: pip install -r requirements-dbt.txt && pip install "sqlalchemy>=2.0.30,<3" psycopg2-binary==2.9.9
+      - name: init.sql and migrations (applied twice)
+        run: |
+          psql -h localhost -U ci -d shop -v ON_ERROR_STOP=1 -f sql/init.sql
+          (cd src && python migrate.py && python migrate.py)
+          psql -h localhost -U ci -d shop -c "SELECT version FROM audit.schema_migrations ORDER BY 1"
       - run: dbt parse --project-dir dbt_project
+      - run: dbt compile --project-dir dbt_project
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Pipeline image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.pipeline
+          push: false
+          tags: de-pipeline:ci
+          cache-from: type=gha,scope=pipeline
+          cache-to: type=gha,mode=max,scope=pipeline
+      - name: Dashboard image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.dashboard
+          push: false
+          tags: de-dashboard:ci
+          cache-from: type=gha,scope=dashboard
+          cache-to: type=gha,mode=max,scope=dashboard
+
+  # The whole stack on the runner: setup + two daily runs on a small dataset, then every test (unit and
+  # integration) inside the pipeline container, and 0 failed data quality checks. Slow (~20-30 min), so it
+  # runs on main, on pull requests and on demand, after the fast jobs passed.
+  e2e:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    needs: [lint, unit-tests, sql]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/e2e_test.sh
+        env:
+          N_ORDERS: "2000"
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --tail 300

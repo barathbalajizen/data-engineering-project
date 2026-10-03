@@ -1,7 +1,6 @@
 """Unit tests for schema drift detection and the evolution policy (pure Python)."""
 import pytest
-from pyspark.sql.types import (DoubleType, IntegerType, LongType, StringType, StructField, StructType,
-                               TimestampType)
+from pyspark.sql.types import DoubleType, IntegerType, LongType, StringType, StructField, StructType, TimestampType
 
 from schema_drift import SchemaDriftError, compare_schemas, enforce, normalize_type, schema_dict
 

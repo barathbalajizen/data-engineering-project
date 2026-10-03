@@ -53,6 +53,7 @@ class PgCheckpointStore:
     @retry(attempts=3, base_delay=2)
     def set(self, table, version, mode):
         import sqlalchemy as sa
+
         from checkpoints import set_run_context
         with self.eng.begin() as c:
             set_run_context(c, self.run_id)

@@ -44,7 +44,8 @@ def main():
     with eng.begin() as c:
         c.execute(sa.text("SELECT set_config('app.run_id', :r, true)"), {"r": RUN_ID})   # checkpoint history
         c.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_orders_updated_at ON source.orders(updated_at)"))
-        c.execute(sa.text("UPDATE control.watermark SET last_watermark='1900-01-01', updated_at=now() WHERE table_name='orders'"))
+        c.execute(sa.text("UPDATE control.watermark SET last_watermark='1900-01-01', updated_at=now() "
+                          "WHERE table_name='orders'"))
     log.info("watermark reset to 1900-01-01")
 
 

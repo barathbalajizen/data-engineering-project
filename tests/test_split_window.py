@@ -12,7 +12,7 @@ def test_splits_into_consecutive_chunks_without_gaps():
 def test_last_chunk_is_clipped_to_end():
     chunks = split_window("2024-01-01", "2024-01-10", chunk_days=7)
     assert chunks[-1] == ("2024-01-08 00:00:00", "2024-01-10 00:00:00")
-    assert all(a[1] == b[0] for a, b in zip(chunks, chunks[1:]))
+    assert all(a[1] == b[0] for a, b in zip(chunks, chunks[1:], strict=False))
 
 
 def test_single_chunk_when_window_is_small():

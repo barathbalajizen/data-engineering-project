@@ -7,3 +7,5 @@ __pycache__/
 dbt_project/target/
 dbt_project/logs/
 .env
+.env.prod
+lake/_bench/
