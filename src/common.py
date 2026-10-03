@@ -1,4 +1,5 @@
 """Shared config, logging, DB and Spark helpers."""
+import json
 import logging
 import os
 
@@ -14,15 +15,31 @@ PG = {
 LAKE = os.getenv("LAKE_PATH", "/app/lake")
 DATA = os.getenv("DATA_PATH", "/app/data/raw")
 RUN_ID = os.getenv("RUN_ID", "manual")
+TASK_NAME = os.getenv("TASK_NAME", "-")
 JDBC_URL = f"jdbc:postgresql://{PG['host']}:{PG['port']}/{PG['db']}"
 JDBC_JAR = os.getenv("PG_JDBC_JAR", "/opt/jars/postgresql.jar")
 
 
+class JsonFormatter(logging.Formatter):
+    """One JSON object per line (LOG_FORMAT=json), with run and task ids for log search tools."""
+
+    def format(self, record):
+        out = {"ts": self.formatTime(record), "level": record.levelname, "run_id": RUN_ID, "task": TASK_NAME,
+               "logger": record.name, "msg": record.getMessage()}
+        if record.exc_info:
+            out["exc"] = self.formatException(record.exc_info)
+        return json.dumps(out, default=str)
+
+
 def get_logger(name: str) -> logging.Logger:
-    logging.basicConfig(
-        level=logging.INFO,
-        format=f"%(asctime)s | %(levelname)s | {RUN_ID} | %(name)s | %(message)s",
-    )
+    if not logging.getLogger().handlers:
+        handler = logging.StreamHandler()
+        if os.getenv("LOG_FORMAT", "text").lower() == "json":
+            handler.setFormatter(JsonFormatter())
+        else:
+            handler.setFormatter(logging.Formatter(
+                f"%(asctime)s | %(levelname)s | {RUN_ID} | {TASK_NAME} | %(name)s | %(message)s"))
+        logging.basicConfig(level=logging.INFO, handlers=[handler])
     return logging.getLogger(name)
 
 
@@ -31,7 +48,8 @@ def get_engine():
         f"postgresql+psycopg2://{PG['user']}:{PG['password']}"
         f"@{PG['host']}:{PG['port']}/{PG['db']}"
     )
-    return sa.create_engine(url)
+    # connect_timeout: fail fast (and let the task retry) instead of hanging when Postgres is down
+    return sa.create_engine(url, pool_pre_ping=True, connect_args={"connect_timeout": 10})
 
 
 def get_spark(app_name: str, ui: bool = False):

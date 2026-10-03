@@ -6,7 +6,8 @@ orders  : incremental by watermark WITH an overlap window. The Bronze write is a
           can never create duplicate rows.
 backfill: --start/--end re-extract a window (by updated_at) and leave the watermark alone.
 others  : full snapshot, overwritten each run.
-Every row carries ingestion_ts, batch_id, source_system.
+Every row carries ingestion_ts, batch_id (unique per table per run attempt), source_system.
+Each table is audited in audit.pipeline_run_log (counts, duration, status) with lineage in audit.lineage.
 """
 import argparse
 import os
@@ -15,7 +16,8 @@ import sqlalchemy as sa
 from delta.tables import DeltaTable
 from pyspark.sql import functions as F
 
-from common import RUN_ID, bronze_path, get_engine, get_logger, get_spark, jdbc_read
+from audit import audit_step, delta_version, delta_write_counts, make_batch_id
+from common import bronze_path, get_engine, get_logger, get_spark, jdbc_read
 from resilience import retry
 from windowing import extraction_window
 
@@ -55,51 +57,53 @@ def set_watermark(eng, table, value):
 
 
 def insert_new_versions(spark, df, path, keys):
-    """Insert-if-not-exists into Bronze. Returns the number of rows actually inserted."""
+    """Insert-if-not-exists into Bronze. Returns (rows inserted, Delta version written)."""
     df = df.dropDuplicates(keys)
-    if not DeltaTable.isDeltaTable(spark, path):
+    before = delta_version(spark, path)
+    if before is None:
         df.write.format("delta").mode("overwrite").save(path)
-        return df.count()
-    cond = " AND ".join(f"t.{k} = s.{k}" for k in keys)
-    target = DeltaTable.forPath(spark, path)
-    target.alias("t").merge(df.alias("s"), cond).whenNotMatchedInsertAll().execute()
-    metrics = target.history(1).select("operationMetrics").first()[0]
-    return int(metrics.get("numTargetRowsInserted", 0))
+    else:
+        cond = " AND ".join(f"t.{k} = s.{k}" for k in keys)
+        DeltaTable.forPath(spark, path).alias("t").merge(df.alias("s"), cond).whenNotMatchedInsertAll().execute()
+    inserted, _, _, version = delta_write_counts(spark, path, before)
+    return inserted, version
 
 
-def main():
-    args = parse_args()
-    spark, eng = get_spark("extract_bronze"), get_engine()
-    for table, cfg in TABLES.items():
+def extract_table(spark, eng, args, table, cfg):
+    """Extract one source table into Bronze inside an audit step."""
+    batch_id = make_batch_id(table)
+    with audit_step(table_name=f"bronze.{table}", batch_id=batch_id, engine=eng) as a:
+        window = "full snapshot"
         if cfg["mode"] == "incremental":
             col = cfg["wm_col"]
             wm = get_watermark(eng, table)
             lo, hi, is_backfill = extraction_window(wm, args.lookback_minutes, args.start, args.end)
-            lo_s = lo.isoformat(sep=" ")
-            cond = f"{col} >= TIMESTAMP '{lo_s}'"
+            cond = f"{col} >= TIMESTAMP '{lo.isoformat(sep=' ')}'"
             if hi:
                 cond += f" AND {col} < TIMESTAMP '{hi.isoformat(sep=' ')}'"
-            log.info("%s: %s, window: %s (watermark=%s)", table,
-                     "BACKFILL" if is_backfill else "incremental", cond, wm)
+            window = ("BACKFILL " if is_backfill else "incremental ") + cond
+            log.info("%s: %s (watermark=%s, batch=%s)", table, window, wm, batch_id)
             dbtable = f"(SELECT * FROM source.{table} WHERE {cond}) AS q"
         else:
             dbtable = f"source.{table}"
 
         df = (jdbc_read(spark, dbtable)
               .withColumn("ingestion_ts", F.current_timestamp())
-              .withColumn("batch_id", F.lit(RUN_ID))
+              .withColumn("batch_id", F.lit(batch_id))
               .withColumn("source_system", F.lit("postgres_shop")))
+        a.rejected = a.updated = 0
 
         if cfg["mode"] == "incremental":
             df = df.cache()
-            n = df.count()
+            n = a.source_rows = df.count()
             if n == 0:
                 log.info("%s: no rows in window", table)
+                a.inserted = 0
                 df.unpersist()
-                continue
-            inserted = insert_new_versions(spark, df, bronze_path(table), cfg["version_keys"])
+                return
+            a.inserted, version = insert_new_versions(spark, df, bronze_path(table), cfg["version_keys"])
             log.info("%s: extracted %d rows, inserted %d new versions (%d already in Bronze)",
-                     table, n, inserted, n - inserted)
+                     table, n, a.inserted, n - a.inserted)
             if not is_backfill:
                 new_wm = df.agg(F.max(col)).first()[0]
                 if new_wm is not None and new_wm > wm:   # never move the watermark backwards
@@ -109,9 +113,23 @@ def main():
                 log.info("%s: backfill, watermark left untouched", table)
             df.unpersist()
         else:
+            before = delta_version(spark, bronze_path(table))
             df.write.format("delta").mode("overwrite").option("overwriteSchema", "true").save(bronze_path(table))
-            log.info("%s: full snapshot written", table)
-    spark.stop()
+            a.inserted, _, _, version = delta_write_counts(spark, bronze_path(table), before)
+            a.source_rows = a.inserted
+            log.info("%s: full snapshot written, %d rows", table, a.inserted)
+        a.lineage(f"postgres:source.{table}", f"delta:bronze/{table}", a.inserted, version, window)
+
+
+def main():
+    args = parse_args()
+    spark, eng = get_spark("extract_bronze"), get_engine()
+    try:
+        for table, cfg in TABLES.items():
+            extract_table(spark, eng, args, table, cfg)
+    finally:
+        spark.stop()
+        eng.dispose()
 
 
 if __name__ == "__main__":

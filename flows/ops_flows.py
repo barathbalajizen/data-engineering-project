@@ -7,8 +7,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from prefect import flow, task  # noqa: E402
 
-from ecommerce_flows import (PY, SRC, notify_failure, publish_run_summary,  # noqa: E402
-                             run_cmd, run_pipeline_steps)
+from ecommerce_flows import (PY, SRC, flow_audit, migrate_db, notify_failure,  # noqa: E402
+                             publish_run_summary, run_cmd, run_pipeline_steps)
 
 HOOKS = dict(on_failure=[notify_failure], on_crashed=[notify_failure])
 
@@ -54,12 +54,14 @@ def setup_demo_data(n_orders: int = 20000, generate_csvs: bool = True, run_pipel
     """First run: create sample CSVs (or use your own Olist CSVs in data/raw), load them into the Postgres
     source, then optionally run the whole pipeline once. WARNING: replaces the source tables and resets the
     orders watermark, so only use it for the first setup or a clean restart."""
+    migrate_db()
     try:
-        if generate_csvs:
-            generate_sample_data(n_orders)
-        load_source()
-        if run_pipeline_after:
-            run_pipeline_steps()
+        with flow_audit():
+            if generate_csvs:
+                generate_sample_data(n_orders)
+            load_source()
+            if run_pipeline_after:
+                run_pipeline_steps()
     finally:
         if run_pipeline_after:
             publish_run_summary("setup")

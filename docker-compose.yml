@@ -65,6 +65,7 @@ services:
       - ./lake:/app/lake
       - ./data:/app/data
       - ./dbt_project:/app/dbt_project
+      - ./sql:/app/sql              # sql/migrations, applied by src/migrate.py at the start of each flow
       - ./docs:/app/docs            # export-showcase writes docs/sample_output here
     depends_on:
       postgres:
