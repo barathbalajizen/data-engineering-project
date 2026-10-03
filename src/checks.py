@@ -1,13 +1,19 @@
 """Data quality + reconciliation checks. Results go to audit.dq_log.
 Any CRITICAL failure exits non-zero so the orchestrator marks the task failed.
+
+Source -> Silver reconciliation is key- and version-level (transforms.reconcile_versions): every source order
+must be in Silver or in the quarantine, and a Silver version older than the source must be explained by a
+rejected newer version.
 """
 import sys
 
 import sqlalchemy as sa
 from pyspark.sql import functions as F
 
-from common import RUN_ID, bronze_path, get_engine, get_logger, get_spark, silver_path
+from common import RUN_ID, bronze_path, get_engine, get_logger, get_spark, jdbc_read, quarantine_path, silver_path
+from delta_utils import is_delta
 from resilience import retry
+from transforms import reconcile_versions
 
 log = get_logger("checks")
 results = []
@@ -36,10 +42,19 @@ def main():
     with eng.connect() as c:
         scalar = lambda sql: c.execute(sa.text(sql)).scalar()  # noqa: E731
 
-        src_n = scalar("SELECT count(*) FROM source.orders WHERE order_id IS NOT NULL AND order_purchase_timestamp IS NOT NULL")
         silver = spark.read.format("delta").load(silver_path("orders"))
         silver_n = silver.count()
-        record("recon_source_vs_silver_orders", src_n == silver_n, abs(src_n - silver_n), f"source={src_n} silver={silver_n}")
+        q_path = quarantine_path("orders")
+        quarantine = spark.read.format("delta").load(q_path) if is_delta(spark, q_path) else None
+        source = jdbc_read(spark, "(SELECT order_id, updated_at FROM source.orders) AS q")
+        r = reconcile_versions(source, silver, quarantine, "order_id", "updated_at")
+        record("recon_source_vs_silver_orders", r["missing"] == 0, r["missing"],
+               f"source={r['source']} silver={r['in_silver']} quarantined_only={r['quarantined_only']} "
+               f"missing={r['missing']}")
+        record("recon_source_vs_silver_versions", r["stale_unexplained"] == 0 and r["ahead"] == 0,
+               r["stale_unexplained"] + r["ahead"],
+               f"stale_explained_by_quarantine={r['stale_explained']} stale_unexplained={r['stale_unexplained']} "
+               f"ahead={r['ahead']}", critical=False)   # the source may change while the run is in progress
 
         dup = silver_n - silver.select("order_id").distinct().count()
         record("silver_orders_unique_key", dup == 0, dup)

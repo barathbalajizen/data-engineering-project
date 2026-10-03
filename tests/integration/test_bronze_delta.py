@@ -83,7 +83,7 @@ SCRIPT = textwrap.dedent('''
     # 6. Change Data Feed shows the inserts after the table was created; time travel sees version 0
     cdf = read_changes(spark, path, 1).groupBy("_change_type").count().collect()
     out["cdf"] = {r["_change_type"]: r["count"] for r in cdf}
-    from delta_tools import cdf_enabled_since
+    from delta_utils import cdf_enabled_since
     out["cdf_since"] = cdf_enabled_since(spark, path)
     out["as_of_v0"] = read_as_of(spark, path, version=0).count()
     out["current"] = spark.read.format("delta").load(path).count()

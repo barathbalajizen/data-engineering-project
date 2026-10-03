@@ -86,3 +86,16 @@ def read_changes(spark, path, start_version, end_version=None):
     if end_version is not None:
         reader = reader.option("endingVersion", int(end_version))
     return reader.load(path)
+
+
+def cdf_enabled_since(spark, path):
+    """First version from which Change Data Feed data exists (the commit that enabled it), or None."""
+    from delta.tables import DeltaTable
+
+    rows = (DeltaTable.forPath(spark, path).history()
+            .select("version", F.col("operationParameters").cast("string").alias("params"))
+            .orderBy("version").collect())
+    for r in rows:
+        if "delta.enableChangeDataFeed" in (r["params"] or "") and '"true"' in r["params"].replace("\\", ""):
+            return int(r["version"])
+    return None

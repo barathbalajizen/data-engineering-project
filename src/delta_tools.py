@@ -13,7 +13,7 @@ import argparse
 from pyspark.sql import functions as F
 
 from common import LAKE, get_logger, get_spark
-from delta_utils import read_as_of, read_changes, table_properties, validate_table_ref
+from delta_utils import cdf_enabled_since, read_as_of, read_changes, table_properties, validate_table_ref
 
 log = get_logger("delta_tools")
 KEYS = {"orders": ["order_id", "updated_at"], "customers": ["customer_id"], "products": ["product_id"],
@@ -46,19 +46,6 @@ def show_as_of(spark, path, table, version, timestamp):
         added = cur.select(*keys).subtract(old.select(*keys)).count()
         missing = old.select(*keys).subtract(cur.select(*keys)).count()
         log.info("keys %s: %d added since then, %d missing now (missing = deleted or lost)", keys, added, missing)
-
-
-def cdf_enabled_since(spark, path):
-    """First version from which Change Data Feed data exists (the commit that enabled it), or None."""
-    from delta.tables import DeltaTable
-
-    rows = (DeltaTable.forPath(spark, path).history()
-            .select("version", F.col("operationParameters").cast("string").alias("params"))
-            .orderBy("version").collect())
-    for r in rows:
-        if "delta.enableChangeDataFeed" in (r["params"] or "") and '"true"' in r["params"].replace("\\", ""):
-            return int(r["version"])
-    return None
 
 
 def show_changes(spark, path, start, end):

@@ -98,7 +98,12 @@ Every change and its action is recorded in `audit.schema_changes`. To accept a r
 Bronze tables keep 30 days of history (`BRONZE_LOG_RETENTION`). `bronze/orders` has **Change Data Feed** enabled, so downstream steps can read only the rows that changed. The `ecommerce-delta-inspect/run` deployment (read-only) shows a table's `history`, compares an old version with today (`as-of`), or lists the `changes` between versions.
 
 ### 3. Silver: cleaning and validation
-[`transform_silver.py`](src/transform_silver.py) (helpers in [`transforms.py`](src/transforms.py)) trims strings, removes duplicates (keeping the latest version) and validates rows. **Invalid rows go to a quarantine table with a reason** instead of being dropped. Orders are upserted with a Delta MERGE where only newer versions win.
+[`transform_silver.py`](src/transform_silver.py) trims strings, validates every row, deduplicates, and loads Silver idempotently.
+
+- **Validation rules** ([`validation.py`](src/validation.py)): primary keys and required columns not null, accepted values (order status, payment type), data types (`try_cast`), and business rules (price > 0, delivered after purchase, ...). **Invalid rows go to a quarantine table listing every rule they failed** (`failed_rules`, `reason`) instead of being dropped. Rows are validated *before* deduplication, so a bad newer version never hides the last good one.
+- **Incremental orders**: Silver reads only the Bronze commits since its last checkpoint (`control.silver_checkpoint`) through **Delta Change Data Feed**. When Bronze has nothing new, the table is skipped without rewriting anything. When there is no checkpoint, or change data is missing (retention), it does a full pass. `--full-refresh` / `SILVER_FULL_REFRESH=true` forces one.
+- **MERGE rules**: new keys are inserted and strictly newer versions update. **Late-arriving older versions are ignored**, so they never overwrite newer data. An invalid newer version leaves the last valid one in place and is reported as `superseded_by_invalid`. The checkpoint moves only after Silver and the quarantine are both written, so a crash in between just reprocesses the same range.
+- **Reconciliation** ([`checks.py`](src/checks.py)) works per key and version: every source order must be in Silver or the quarantine, and a Silver version older than the source must be explained by a rejected newer version.
 
 ### 4. Load to the warehouse
 [`load_warehouse.py`](src/load_warehouse.py) loads Silver into Postgres `staging` with Spark JDBC (truncate and reload, so it is safe to rerun).
