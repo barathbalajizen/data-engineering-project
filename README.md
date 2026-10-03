@@ -123,13 +123,16 @@ The [dbt project](dbt_project/) has three layers:
 | `fact_payments` | One row per order payment. **Incremental** |
 | `dim_customer` | **SCD Type 2** from a dbt snapshot (`valid_from`, `valid_to`, `is_current`) |
 | `dim_product`, `dim_seller`, `dim_date` | Dimensions with surrogate keys |
-| `agg_daily_sales`, `agg_category_revenue` | Reporting aggregates for the dashboard |
+| `agg_daily_sales`, `agg_category_revenue` | Daily sales and revenue per category |
+| `agg_monthly_kpis` | Per month: orders, new vs returning customers, revenue, average order value, late-delivery % |
+| `agg_customer_retention` | Monthly cohort retention (% of a first-order cohort ordering again N months later) |
+| `agg_product_sales` | Per product: orders, units, revenue, average price, revenue rank and share |
 
 `fact_orders` uses a **point-in-time join**: each order links to the customer version that was valid when the order was placed.
 
 **Incremental facts** (`delete+insert` on the surrogate key) rebuild only the rows whose order changed since the last load, plus any key not in the table yet. The second condition matters because a record restored by a backfill has an *old* `updated_at`, and a plain "updated since the last load" filter would skip it forever ([`macros/incremental_predicate.sql`](dbt_project/macros/incremental_predicate.sql)). `dbt build --full-refresh` rebuilds them completely.
 
-**dbt tests (55):** `unique`, `not_null`, `relationships` (facts → dimensions and `dim_date`; staging items/payments → orders as *warn*, since an order rejected in Silver leaves orphans), `accepted_values` (order status, payment type, late flag), custom generic tests `non_negative` and `unique_combination` (composite keys), and two singular tests. `assert_fact_orders_complete` checks that the incremental fact matches its source exactly. `assert_revenue_reconciles` checks that the aggregate revenue equals the items. **Source freshness** warns when no new data arrived for 24 hours.
+**dbt tests (70):** `unique`, `not_null`, `relationships` (facts → dimensions and `dim_date`; staging items/payments → orders as *warn*, since an order rejected in Silver leaves orphans), `accepted_values` (order status, payment type, late flag), custom generic tests `non_negative` and `unique_combination` (composite keys), and three singular tests. `assert_fact_orders_complete` checks that the incremental fact matches its source exactly. `assert_revenue_reconciles` checks that the aggregate revenue equals the items. `assert_business_aggregates_reconcile` checks that monthly, product and daily revenue agree, and that retention starts at 100%. **Source freshness** warns when no new data arrived for 24 hours.
 
 ### 6. Data quality checks and scorecard
 [`checks.py`](src/checks.py) runs after every load. All results go to `audit.dq_log` with a category (completeness, uniqueness, validity, referential integrity, reconciliation, freshness, business rule):
@@ -170,7 +173,17 @@ Benchmarks ([`benchmark.py`](src/benchmark.py), [`benchmark_dbt.py`](src/benchma
 Also measured and kept as they were: 8 shuffle partitions (Spark's default of 200 is 2–6x slower), `local[2]` (4 cores didn't help end to end), and only a unique index on each fact key (other indexes gave no speed-up). [`skew_demo.py`](src/skew_demo.py) compares a skewed join four ways: naive, broadcast, salting and Spark AQE.
 
 ### 10. Dashboard and published results
-[`dashboard/app.py`](dashboard/app.py) is a Streamlit app: KPIs, monthly and daily sales, revenue by category, quality-check results, rows per layer and customer history. [`export_showcase.py`](src/export_showcase.py) exports a snapshot of the results to [docs/sample_output/](docs/sample_output/README.md), so the results are visible on GitHub and the dashboard runs on Streamlit Cloud without a database.
+[`dashboard/app.py`](dashboard/app.py) is a Streamlit app with three tabs:
+
+| Tab | Content | Source |
+|---|---|---|
+| **Business** | Revenue, orders, **average order value**, customers, returning-customer share. **Daily revenue** with a 7-day average, AOV by month, new vs returning customers, **cohort retention** heatmap and curve, **product sales** (top products, revenue by category) | dbt Gold: `agg_daily_sales`, `agg_monthly_kpis`, `agg_customer_retention`, `agg_product_sales`, `agg_category_revenue` |
+| **Pipeline operations** | **Run history** with status, duration, attempts, retries and first failed task; **success and failure statistics**; **duration per task** for the last 15 runs; per-task success rate and median/p95 duration; rows per table in the latest run | `audit.v_flow_runs`, `audit.pipeline_run_log`, `audit.v_task_stats` |
+| **Data quality** | Pass rate and health score, the **quality trend** across runs, checks by category, **source-to-target reconciliation**, warnings and failures, the **rejected-records report** (rows per validation rule with sample keys), and schema changes | `audit.dq_scorecard*`, `audit.dq_latest`, `audit.rejected_records`, `audit.schema_changes` |
+
+Business metrics are modelled and tested in dbt, not computed in the dashboard. A singular test checks that monthly, product and daily revenue agree, and that every retention cohort starts at 100%. The dashboard only does display maths ([`metrics.py`](dashboard/metrics.py), unit-tested).
+
+All datasets are defined once in [`export_showcase.py`](src/export_showcase.py). The dashboard reads them live from Postgres, and the same file exports them to [docs/sample_output/](docs/sample_output/README.md), so the results are visible on GitHub and the dashboard runs on Streamlit Cloud without a database.
 
 ---
 

@@ -1,0 +1,13 @@
+detected_at,table_name,change_type,column_name,old_type,new_type,action
+2026-10-03 07:40:13.295618,staging.order_payments,added,source_table,,string,evolved
+2026-10-03 07:40:13.293329,staging.order_payments,added,pipeline_run_id,,string,evolved
+2026-10-03 07:40:04.476575,staging.order_items,added,source_table,,string,evolved
+2026-10-03 07:40:04.473513,staging.order_items,added,pipeline_run_id,,string,evolved
+2026-10-03 07:39:58.909115,staging.sellers,added,source_table,,string,evolved
+2026-10-03 07:39:58.905936,staging.sellers,added,pipeline_run_id,,string,evolved
+2026-10-03 07:39:52.074208,staging.products,added,source_table,,string,evolved
+2026-10-03 07:39:52.071192,staging.products,added,pipeline_run_id,,string,evolved
+2026-10-03 07:39:43.392304,staging.customers,added,source_table,,string,evolved
+2026-10-03 07:39:43.388788,staging.customers,added,pipeline_run_id,,string,evolved
+2026-10-03 07:39:23.583003,staging.orders,added,source_table,,string,evolved
+2026-10-03 07:39:23.571869,staging.orders,added,pipeline_run_id,,string,evolved

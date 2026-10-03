@@ -33,6 +33,7 @@ SCRIPT = textwrap.dedent('''
             self.source_rows = self.inserted = self.updated = self.rejected = None
             self.details = []
         def lineage(self, *a, **k): self.details.append(a[4] if len(a) > 4 else k.get("detail"))
+        def rejections(self, table, counts, samples=None): self.rejected_report = (table, counts, samples)
         def schema_changes(self, *a): pass
 
     spark = get_spark("test_silver")
@@ -60,6 +61,7 @@ SCRIPT = textwrap.dedent('''
         silver = {r["order_id"]: str(r["updated_at"])[:10] for r in spark.read.format("delta").load(spath).collect()}
         return {"read": a.source_rows, "ins": a.inserted, "upd": a.updated, "rej": a.rejected,
                 "detail": a.details[0] if a.details else None, "silver": silver,   # Silver lineage comes first
+                "report": getattr(a, "rejected_report", None),
                 "silver_version": DeltaTable.forPath(spark, spath).history(1).first()["version"],
                 "checkpoint": store.get("orders")}
 
@@ -123,6 +125,13 @@ def test_late_and_invalid_versions_do_not_overwrite_silver(result):
 
 def test_quarantine_lists_rules_failed(result):
     assert result["quarantine"] == [["o2", "delivered_after_purchase"], ["o4", "accepted:order_status"]]
+
+
+def test_rejected_records_report_per_rule_with_samples(result):
+    table, counts, samples = result["incremental"]["report"]
+    assert table == "silver.orders"
+    assert counts == {"delivered_after_purchase": 1, "accepted:order_status": 1}
+    assert samples == {"delivered_after_purchase": "order_id=o2", "accepted:order_status": "order_id=o4"}
 
 
 def test_rerun_and_full_refresh_are_idempotent(result):

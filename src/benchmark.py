@@ -43,6 +43,9 @@ class Step:
     def schema_changes(self, *a, **k):
         pass
 
+    def rejections(self, *a, **k):
+        pass
+
 
 class Recorder:
     def __init__(self, eng, label):

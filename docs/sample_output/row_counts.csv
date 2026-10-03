@@ -1,0 +1,14 @@
+table,rows
+source.orders,20000
+source.customers,20000
+staging.orders,20000
+staging.order_items,25024
+analytics.fact_orders,25024
+analytics.fact_payments,20000
+analytics.dim_customer,20000
+analytics.dim_product,2000
+analytics.dim_seller,200
+analytics.agg_daily_sales,607
+analytics.agg_monthly_kpis,20
+analytics.agg_customer_retention,210
+analytics.agg_product_sales,2000

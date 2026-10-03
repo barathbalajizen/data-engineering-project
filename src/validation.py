@@ -64,3 +64,13 @@ def rule_failure_counts(invalid_df):
     """{rule name: rows failing it} for logging and the audit trail."""
     rows = invalid_df.select(F.explode(FAILED_RULES).alias("rule")).groupBy("rule").count().collect()
     return {r["rule"]: r["count"] for r in rows}
+
+
+def rule_samples(invalid_df, keys, per_rule=5):
+    """{rule: "k=v, k=v; ..."}: up to `per_rule` sample keys of rows failing each rule (for the report)."""
+    out = {}
+    for rule in rule_failure_counts(invalid_df):
+        rows = (invalid_df.filter(F.array_contains(FAILED_RULES, rule)).select(*keys)
+                .limit(per_rule).collect())
+        out[rule] = "; ".join(", ".join(f"{k}={r[k]}" for k in keys) for r in rows)
+    return out

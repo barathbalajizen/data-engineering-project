@@ -27,7 +27,7 @@ from common import (RUN_ID, bronze_path, get_engine, get_logger, get_spark, quar
 from delta_utils import cdf_enabled_since, is_delta, read_changes, schema_evolution
 from incremental import FULL, INCREMENTAL, SKIP, PgCheckpointStore, decide_mode
 from transforms import classify_versions, clean_strings, dedupe_latest
-from validation import accepted, apply_rules, castable, check, not_null, rule_failure_counts
+from validation import accepted, apply_rules, castable, check, not_null, rule_failure_counts, rule_samples
 
 log = get_logger("transform_silver")
 
@@ -188,6 +188,7 @@ def process_incremental(spark, a, table, s, store, force_full):
         log.warning("%s: %d row(s) quarantined: %s", table, a.rejected, failures)
         a.lineage(f"delta:bronze/{table}", f"delta:silver/_quarantine/{table}", a.rejected,
                   delta_version(spark, quarantine_path(table)), f"rules={failures}")
+        a.rejections(f"silver.{table}", failures, rule_samples(invalid, s["keys"]))
     for df in (batch, latest, invalid):
         df.unpersist()
 
@@ -216,6 +217,7 @@ def process_full(spark, a, table, s):
         log.warning("%s: %d row(s) quarantined: %s", table, a.rejected, failures)
         a.lineage(f"delta:bronze/{table}@v{bronze_v}", f"delta:silver/_quarantine/{table}", a.rejected,
                   delta_version(spark, quarantine_path(table)), f"rules={failures}")
+        a.rejections(f"silver.{table}", failures, rule_samples(invalid, s["keys"]))
     for df in (bronze, latest, invalid):
         df.unpersist()
 

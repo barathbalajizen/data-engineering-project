@@ -118,6 +118,14 @@ class PgAuditWriter:
                 "column_name, old_type, new_type, action) VALUES (:pipeline_run_id, :task_name, :batch_id, "
                 ":table_name, :change_type, :column_name, :old_type, :new_type, :action)"), row)
 
+    def rejection(self, row):
+        import sqlalchemy as sa
+        with self._eng().begin() as c:
+            c.execute(sa.text(
+                "INSERT INTO audit.rejected_records (pipeline_run_id, batch_id, table_name, rule, rows_rejected, "
+                "sample_keys) VALUES (:pipeline_run_id, :batch_id, :table_name, :rule, :rows_rejected, "
+                ":sample_keys)"), row)
+
     def close(self):
         if self._owned and self._engine is not None:
             self._engine.dispose()
@@ -188,6 +196,18 @@ class audit_step:  # noqa: N801  (used as a context manager, reads like a functi
                     "column_name": column, "old_type": old_type, "new_type": new_type, "action": action})
             except Exception as exc:
                 log.warning("schema change not recorded for %s.%s: %s", table_name, column, _short(exc))
+
+    def rejections(self, table_name, rule_counts, samples=None):
+        """Record rows rejected per validation rule in audit.rejected_records (best effort).
+        rule_counts {rule: rows}; samples {rule: "key=value; ..."}."""
+        for rule, rows in rule_counts.items():
+            try:
+                self.writer.rejection({
+                    "pipeline_run_id": self.row["pipeline_run_id"], "batch_id": self.row["batch_id"],
+                    "table_name": table_name, "rule": rule, "rows_rejected": int(rows),
+                    "sample_keys": (samples or {}).get(rule)})
+            except Exception as exc:
+                log.warning("rejection not recorded for %s/%s: %s", table_name, rule, _short(exc))
 
     def _close(self):
         close = getattr(self.writer, "close", None)

@@ -1,0 +1,8 @@
+task_name,attempts,successes,failures,success_rate,avg_seconds,median_seconds,p95_seconds,max_seconds,last_start,last_status
+dbt-build,9,9,0,100.0,22.1,20.2,39.1,47.5,2026-10-03 15:34:24.361409,SUCCESS
+delta-inspect,1,1,0,100.0,37.3,37.3,37.3,37.3,2026-10-03 07:42:15.224553,SUCCESS
+extract-bronze,8,8,0,100.0,170.0,137.1,313.2,361.6,2026-10-03 15:26:15.106879,SUCCESS
+lake-maintenance,2,2,0,100.0,1518.4,1518.4,2616.1,2738.1,2026-10-03 13:56:57.833444,SUCCESS
+load-warehouse,8,8,0,100.0,133.0,118.5,207.3,215.8,2026-10-03 15:32:15.966963,SUCCESS
+quality-checks,9,9,0,100.0,89.3,83.3,125.7,128.6,2026-10-03 15:34:48.419527,SUCCESS
+transform-silver,8,8,0,100.0,259.5,234.1,401.9,408.9,2026-10-03 15:28:17.747541,SUCCESS

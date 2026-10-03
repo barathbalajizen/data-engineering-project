@@ -1,0 +1,91 @@
+check_name,check_source,category,status,rows_failed,detail,run_ts
+dbt_freshness:staging.orders,dbt,freshness,WARN,0,max_loaded_at=2026-10-02T03:56:04.370200+00:00 age_hours=35.6,2026-10-03 15:34:48.270659
+dbt:assert_business_aggregates_reconcile,dbt,business_rule,PASS,0,,2026-10-03 15:34:41.610191
+dbt:assert_fact_orders_complete,dbt,business_rule,PASS,0,,2026-10-03 15:34:41.610191
+dbt:assert_revenue_reconciles,dbt,business_rule,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_agg_customer_retention_months_since_first,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_agg_customer_retention_retention_pct,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_agg_monthly_kpis_avg_order_value,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_agg_monthly_kpis_month,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_agg_product_sales_product_key,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_dim_customer_customer_key,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_dim_customer_is_current,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_dim_date_date_key,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_dim_product_product_key,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_dim_seller_seller_key,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_fact_orders_customer_key,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_fact_orders_date_key,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_fact_orders_order_item_key,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_fact_orders_price,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_fact_payments_payment_key,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_stg_customers_customer_id,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_stg_order_items_order_id,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_stg_order_items_price,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_stg_order_payments_order_id,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_stg_orders_customer_id,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_stg_orders_order_id,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_stg_orders_updated_at,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_stg_products_product_id,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:not_null_stg_sellers_seller_id,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:source_not_null_staging_customers_customer_id,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:source_not_null_staging_orders_order_id,dbt,completeness,PASS,0,,2026-10-03 15:34:41.610191
+fact_orders_no_null_customer_key,checks,completeness,PASS,0,,2026-10-03 15:36:00.557071
+dbt_freshness:staging.customers,dbt,freshness,PASS,0,max_loaded_at=2026-10-03T15:27:17.835107+00:00 age_hours=0.1,2026-10-03 15:34:48.270659
+dbt_freshness:staging.order_items,dbt,freshness,PASS,0,max_loaded_at=2026-10-03T15:27:55.594070+00:00 age_hours=0.1,2026-10-03 15:34:48.270659
+dbt_freshness:staging.order_payments,dbt,freshness,PASS,0,max_loaded_at=2026-10-03T15:28:07.490387+00:00 age_hours=0.1,2026-10-03 15:34:48.270659
+dbt_freshness:staging.products,dbt,freshness,PASS,0,max_loaded_at=2026-10-03T15:27:33.528986+00:00 age_hours=0.1,2026-10-03 15:34:48.270659
+dbt_freshness:staging.sellers,dbt,freshness,PASS,0,max_loaded_at=2026-10-03T15:27:43.483277+00:00 age_hours=0.1,2026-10-03 15:34:48.270659
+pipeline_previous_success_recent,checks,freshness,PASS,0,hours_since_previous_success=2.6 limit=26,2026-10-03 15:36:00.557071
+recon_items_vs_fact,checks,reconciliation,PASS,0,items=25024 fact=25024,2026-10-03 15:36:00.557071
+recon_orders_source_vs_gold,checks,reconciliation,PASS,0,source=19583.00 gold=19583.00 diff=0.00,2026-10-03 15:36:00.557071
+recon_orders_staging_vs_gold,checks,reconciliation,PASS,0,staging=19583.00 gold=19583.00 diff=0.00,2026-10-03 15:36:00.557071
+recon_payments_source_vs_gold,checks,reconciliation,PASS,0,source=2943804.92 gold=2943804.92 diff=-0.00,2026-10-03 15:36:00.557071
+recon_payments_staging_vs_gold,checks,reconciliation,PASS,0,staging=2943804.92 gold=2943804.92 diff=-0.00,2026-10-03 15:36:00.557071
+recon_revenue_source_vs_gold,checks,reconciliation,PASS,0,source=2333350.06 gold=2333350.06 diff=-0.00,2026-10-03 15:36:00.557071
+recon_revenue_staging_vs_gold,checks,reconciliation,PASS,0,staging=2333350.06 gold=2333350.06 diff=-0.00,2026-10-03 15:36:00.557071
+recon_silver_vs_staging_orders,checks,reconciliation,PASS,0,silver=20000 staging=20000,2026-10-03 15:36:00.557071
+recon_source_vs_silver_orders,checks,reconciliation,PASS,0,source=20000 silver=20000 quarantined_only=0 missing=0,2026-10-03 15:36:00.557071
+recon_source_vs_silver_versions,checks,reconciliation,PASS,0,stale_explained_by_quarantine=0 stale_unexplained=0 ahead=0,2026-10-03 15:36:00.557071
+dbt:relationships_agg_product_sales_product_key__product_key__ref_dim_product_,dbt,referential_integrity,PASS,0,,2026-10-03 15:34:41.610191
+dbt:relationships_fact_orders_customer_key__customer_key__ref_dim_customer_,dbt,referential_integrity,PASS,0,,2026-10-03 15:34:41.610191
+dbt:relationships_fact_orders_date_key__date_key__ref_dim_date_,dbt,referential_integrity,PASS,0,,2026-10-03 15:34:41.610191
+dbt:relationships_fact_orders_product_key__product_key__ref_dim_product_,dbt,referential_integrity,PASS,0,,2026-10-03 15:34:41.610191
+dbt:relationships_fact_orders_seller_key__seller_key__ref_dim_seller_,dbt,referential_integrity,PASS,0,,2026-10-03 15:34:41.610191
+dbt:relationships_fact_payments_date_key__date_key__ref_dim_date_,dbt,referential_integrity,PASS,0,,2026-10-03 15:34:41.610191
+dbt:relationships_stg_order_items_order_id__order_id__ref_stg_orders_,dbt,referential_integrity,PASS,0,,2026-10-03 15:34:41.610191
+dbt:relationships_stg_order_payments_order_id__order_id__ref_stg_orders_,dbt,referential_integrity,PASS,0,,2026-10-03 15:34:41.610191
+bronze_orders_no_duplicate_versions,checks,uniqueness,PASS,0,,2026-10-03 15:36:00.557071
+dbt:source_unique_staging_customers_customer_id,dbt,uniqueness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:source_unique_staging_orders_order_id,dbt,uniqueness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:unique_agg_monthly_kpis_month,dbt,uniqueness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:unique_agg_product_sales_product_key,dbt,uniqueness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:unique_combination_agg_customer_retention_cohort_month__months_since_first,dbt,uniqueness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:unique_combination_stg_order_items_order_id__order_item_id,dbt,uniqueness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:unique_combination_stg_order_payments_order_id__payment_sequential,dbt,uniqueness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:unique_dim_customer_customer_key,dbt,uniqueness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:unique_dim_date_date_key,dbt,uniqueness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:unique_dim_product_product_key,dbt,uniqueness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:unique_dim_seller_seller_key,dbt,uniqueness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:unique_fact_orders_order_item_key,dbt,uniqueness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:unique_fact_payments_payment_key,dbt,uniqueness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:unique_stg_customers_customer_id,dbt,uniqueness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:unique_stg_orders_order_id,dbt,uniqueness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:unique_stg_products_product_id,dbt,uniqueness,PASS,0,,2026-10-03 15:34:41.610191
+dbt:unique_stg_sellers_seller_id,dbt,uniqueness,PASS,0,,2026-10-03 15:34:41.610191
+silver_orders_unique_key,checks,uniqueness,PASS,0,,2026-10-03 15:36:00.557071
+dbt:accepted_values_fact_orders_is_late__False__0__1,dbt,validity,PASS,0,,2026-10-03 15:34:41.610191
+dbt:accepted_values_fact_orders_order_status__created__approved__invoiced__processing__shipped__delivered__unavailable__canceled,dbt,validity,PASS,0,,2026-10-03 15:34:41.610191
+dbt:accepted_values_fact_payments_payment_type__credit_card__boleto__voucher__debit_card__not_defined,dbt,validity,PASS,0,,2026-10-03 15:34:41.610191
+dbt:accepted_values_stg_order_payments_payment_type__credit_card__boleto__voucher__debit_card__not_defined,dbt,validity,PASS,0,,2026-10-03 15:34:41.610191
+dbt:accepted_values_stg_orders_order_status__created__approved__invoiced__processing__shipped__delivered__unavailable__canceled,dbt,validity,PASS,0,,2026-10-03 15:34:41.610191
+dbt:non_negative_agg_customer_retention_months_since_first,dbt,validity,PASS,0,,2026-10-03 15:34:41.610191
+dbt:non_negative_agg_customer_retention_retention_pct,dbt,validity,PASS,0,,2026-10-03 15:34:41.610191
+dbt:non_negative_agg_monthly_kpis_avg_order_value,dbt,validity,PASS,0,,2026-10-03 15:34:41.610191
+dbt:non_negative_agg_monthly_kpis_new_customers,dbt,validity,PASS,0,,2026-10-03 15:34:41.610191
+dbt:non_negative_agg_product_sales_revenue,dbt,validity,PASS,0,,2026-10-03 15:34:41.610191
+dbt:non_negative_fact_orders_price,dbt,validity,PASS,0,,2026-10-03 15:34:41.610191
+dbt:non_negative_fact_payments_payment_value,dbt,validity,PASS,0,,2026-10-03 15:34:41.610191
+dbt:non_negative_stg_order_items_freight_value,dbt,validity,PASS,0,,2026-10-03 15:34:41.610191
+dbt:non_negative_stg_order_items_price,dbt,validity,PASS,0,,2026-10-03 15:34:41.610191
+dbt:non_negative_stg_order_payments_payment_value,dbt,validity,PASS,0,,2026-10-03 15:34:41.610191
+dbt:non_negative_stg_products_product_weight_g,dbt,validity,PASS,0,,2026-10-03 15:34:41.610191

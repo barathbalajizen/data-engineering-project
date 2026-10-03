@@ -71,3 +71,31 @@ models:
               values: [credit_card, boleto, voucher, debit_card, not_defined]
       - name: payment_value
         data_tests: [non_negative]
+  - name: agg_monthly_kpis
+    columns:
+      - name: month
+        data_tests: [unique, not_null]
+      - name: avg_order_value
+        data_tests: [not_null, non_negative]
+      - name: new_customers
+        data_tests: [non_negative]
+  - name: agg_customer_retention
+    data_tests:
+      - unique_combination:
+          columns: [cohort_month, months_since_first]
+    columns:
+      - name: months_since_first
+        data_tests: [not_null, non_negative]
+      - name: retention_pct
+        data_tests: [not_null, non_negative]
+  - name: agg_product_sales
+    columns:
+      - name: product_key
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              to: ref('dim_product')
+              field: product_key
+      - name: revenue
+        data_tests: [non_negative]

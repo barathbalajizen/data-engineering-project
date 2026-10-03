@@ -1,0 +1,8 @@
+category,checks,passed,warned,failed,pass_rate
+business_rule,3,3,0,0,100.0
+completeness,27,27,0,0,100.0
+freshness,7,6,1,0,85.7
+reconciliation,10,10,0,0,100.0
+referential_integrity,8,8,0,0,100.0
+uniqueness,19,19,0,0,100.0
+validity,16,16,0,0,100.0
