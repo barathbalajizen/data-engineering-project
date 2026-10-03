@@ -110,6 +110,14 @@ class PgAuditWriter:
                 "row_count, target_version, detail) VALUES (:pipeline_run_id, :task_name, :batch_id, "
                 ":source_object, :target_object, :row_count, :target_version, :detail)"), row)
 
+    def schema_change(self, row):
+        import sqlalchemy as sa
+        with self._eng().begin() as c:
+            c.execute(sa.text(
+                "INSERT INTO audit.schema_changes (pipeline_run_id, task_name, batch_id, table_name, change_type, "
+                "column_name, old_type, new_type, action) VALUES (:pipeline_run_id, :task_name, :batch_id, "
+                ":table_name, :change_type, :column_name, :old_type, :new_type, :action)"), row)
+
     def close(self):
         if self._owned and self._engine is not None:
             self._engine.dispose()
@@ -169,6 +177,17 @@ class audit_step:  # noqa: N801  (used as a context manager, reads like a functi
                                  "row_count": row_count, "target_version": target_version, "detail": detail})
         except Exception as exc:
             log.warning("lineage not recorded %s -> %s: %s", source_object, target_object, _short(exc))
+
+    def schema_changes(self, table_name, changes):
+        """Record DriftReport.changes() rows in audit.schema_changes (best effort)."""
+        for change_type, column, old_type, new_type, action in changes:
+            try:
+                self.writer.schema_change({
+                    "pipeline_run_id": self.row["pipeline_run_id"], "task_name": self.row["task_name"],
+                    "batch_id": self.row["batch_id"], "table_name": table_name, "change_type": change_type,
+                    "column_name": column, "old_type": old_type, "new_type": new_type, "action": action})
+            except Exception as exc:
+                log.warning("schema change not recorded for %s.%s: %s", table_name, column, _short(exc))
 
     def _close(self):
         close = getattr(self.writer, "close", None)

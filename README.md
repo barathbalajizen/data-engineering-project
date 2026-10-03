@@ -80,6 +80,23 @@ A batch data platform for an online store, built end to end. It **extracts** ord
 ### 2. Bronze: incremental extraction
 [`extract_bronze.py`](src/extract_bronze.py) reads only orders changed since the last run, using a **watermark** stored in `control.watermark`. Each run re-reads a 10-minute **overlap** to catch late-committed rows. Data is written to Delta Lake with an **insert-if-not-exists MERGE** on `(order_id, updated_at)`, so a rerun never inserts a row twice. The watermark moves forward only after a successful write.
 
+Every Bronze row carries `ingestion_ts`, `batch_id` (unique per table per run), `source_system`, `pipeline_run_id` and `source_table`. Each table load is recorded in `audit.pipeline_run_log` (rows read/inserted, duration, status, retries) and `audit.lineage` (source → target, with the Delta version written).
+
+#### Schema drift
+Before writing, [`schema_drift.py`](src/schema_drift.py) compares the source schema with the schema already accepted in Bronze:
+
+| Change | Action |
+|---|---|
+| New column | Accepted: Bronze, Silver and staging evolve (older rows get `NULL`) |
+| Narrower type (e.g. `int` into a `bigint` column) | Accepted: cast to the existing type |
+| Removed column | Rejected: the table fails, Bronze is not written. Set `SCHEMA_DRIFT_ALLOW_REMOVED_COLUMNS=true` to fill it with `NULL` instead |
+| Any other type change | Rejected |
+
+Every change and its action is recorded in `audit.schema_changes`. To accept a rejected change on purpose, change the Bronze table explicitly (for example rewrite it with the new schema) and rerun. Without this check, Delta MERGE would silently drop new source columns.
+
+#### Time travel and Change Data Feed
+Bronze tables keep 30 days of history (`BRONZE_LOG_RETENTION`). `bronze/orders` has **Change Data Feed** enabled, so downstream steps can read only the rows that changed. The `ecommerce-delta-inspect/run` deployment (read-only) shows a table's `history`, compares an old version with today (`as-of`), or lists the `changes` between versions.
+
 ### 3. Silver: cleaning and validation
 [`transform_silver.py`](src/transform_silver.py) (helpers in [`transforms.py`](src/transforms.py)) trims strings, removes duplicates (keeping the latest version) and validates rows. **Invalid rows go to a quarantine table with a reason** instead of being dropped. Orders are upserted with a Delta MERGE where only newer versions win.
 
@@ -164,6 +181,7 @@ Run **`ecommerce-export-showcase/run`**, then commit and push `docs/sample_outpu
 | `ecommerce-simulate-bronze-loss/run` | Delete a date range from Bronze to practise recovery. Parameters: `start`, `end` |
 | `ecommerce-skew-demo/run` | Data-skew comparison. Parameters: `rows`, `hot_share`, `salts` |
 | `ecommerce-export-showcase/run` | Export a result snapshot to `docs/sample_output/` |
+| `ecommerce-delta-inspect/run` | Read-only Delta history, time travel (`as-of`) and Change Data Feed (`changes`). Parameters: `action`, `table` (e.g. `bronze/orders`), `version`, `timestamp`, `from_version` |
 
 ---
 

@@ -43,6 +43,17 @@ def export_showcase():
     run_cmd([PY, f"{SRC}/export_showcase.py"])
 
 
+@task(name="delta-inspect", retries=0)
+def delta_inspect(action: str, table: str, version: int | None, timestamp: str | None,
+                  from_version: int | None, to_version: int | None, limit: int):
+    cmd = [PY, f"{SRC}/delta_tools.py", action, "--table", table, "--limit", str(limit)]
+    for flag, value in (("--version", version), ("--timestamp", timestamp),
+                        ("--from-version", from_version), ("--to-version", to_version)):
+        if value is not None:
+            cmd += [flag, str(value)]
+    run_cmd(cmd)
+
+
 @task(name="skew-demo", retries=0)
 def skew_demo(rows: int, hot_share: float, salts: int):
     run_cmd([PY, f"{SRC}/skew_demo.py", "--rows", str(rows), "--hot-share", str(hot_share),
@@ -98,3 +109,14 @@ def export_showcase_flow():
     """Export a snapshot of the Gold results to docs/sample_output/ (CSVs + README.md). Commit that folder so
     people browsing the repo on GitHub can see the output without running the pipeline."""
     export_showcase()
+
+
+@flow(name="ecommerce-delta-inspect", **HOOKS)
+def delta_inspect_flow(action: str = "history", table: str = "bronze/orders", version: int | None = None,
+                       timestamp: str | None = None, from_version: int | None = None,
+                       to_version: int | None = None, limit: int = 10):
+    """Read-only Delta inspection (output in the task log):
+    history  - versions, operations and row counts (and the table's retention/CDF properties)
+    as-of    - time travel: compare `version` or `timestamp` with the current table
+    changes  - Change Data Feed from `from_version` (to `to_version`); CDF is enabled on bronze/orders"""
+    delta_inspect(action, table, version, timestamp, from_version, to_version, limit)

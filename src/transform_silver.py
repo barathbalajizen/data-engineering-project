@@ -8,6 +8,7 @@ from pyspark.sql import functions as F
 
 from audit import audit_step, delta_last_operation, delta_version, delta_write_counts, make_batch_id
 from common import bronze_path, get_engine, get_logger, get_spark, quarantine_path, silver_path
+from delta_utils import schema_evolution
 from transforms import clean_strings, dedupe_latest, split_valid_invalid
 
 log = get_logger("transform_silver")
@@ -48,11 +49,14 @@ def transform_table(spark, eng, table, s):
             cond = " AND ".join(f"t.{k} = s.{k}" for k in s["keys"])
             # Strictly newer versions only: Bronze keys versions on (key, updated_at), so an equal updated_at
             # is the same version. With >= every rerun rewrote (and counted as updated) every row.
-            (DeltaTable.forPath(spark, path).alias("t")
-                .merge(good.alias("s"), cond)
-                .whenMatchedUpdateAll(condition="s.updated_at > t.updated_at")
-                .whenNotMatchedInsertAll()
-                .execute())
+            # Schema evolution is on because Bronze already gated the schema (extract_bronze.check_schema);
+            # without it Delta MERGE would silently drop columns that Bronze accepted.
+            with schema_evolution(spark):
+                (DeltaTable.forPath(spark, path).alias("t")
+                    .merge(good.alias("s"), cond)
+                    .whenMatchedUpdateAll(condition="s.updated_at > t.updated_at")
+                    .whenNotMatchedInsertAll()
+                    .execute())
         else:
             good.write.format("delta").mode("overwrite").option("overwriteSchema", "true").save(path)
         a.inserted, a.updated, _, version = delta_write_counts(spark, path, before)
