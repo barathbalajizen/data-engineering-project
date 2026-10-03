@@ -64,12 +64,12 @@ Every step is a script in [`src/`](../src) that runs on its own or as a Prefect 
 
 | Deployment | When | What |
 |---|---|---|
-| `ecommerce-daily/daily` | Daily 02:00 (`DAILY_CRON`) or on demand | extract → silver → staging → dbt → checks. `start_from`/`stop_after` run part of it; `resume_failed` continues the latest failed run |
-| `ecommerce-backfill/backfill` | On demand | Re-extract a date range in chunks, then rebuild downstream; the watermark is not touched |
-| `ecommerce-lake-maintenance/weekly` | Sunday 03:00 (`MAINTENANCE_CRON`) | OPTIMIZE tables with many small files; VACUUM dry run (`vacuum=true` deletes) |
-| `ecommerce-setup/run` | First run | Generate or load the source data and run the pipeline |
-| `ecommerce-export-showcase/run` | On demand | Export the dashboard datasets to `docs/sample_output` |
-| `ecommerce-delta-inspect/run` | On demand | Delta history, time travel and Change Data Feed (read-only) |
+| `ecommerce-daily/02-daily-incremental-load` | Daily 02:00 (`DAILY_CRON`) or on demand | extract → silver → staging → dbt → checks. `start_from`/`stop_after` run part of it; `resume_failed` continues the latest failed run |
+| `ecommerce-backfill/03-backfill-date-range` | On demand | Re-extract a date range in chunks, then rebuild downstream; the watermark is not touched |
+| `ecommerce-lake-maintenance/ops-weekly-lake-maintenance` | Sunday 03:00 (`MAINTENANCE_CRON`) | OPTIMIZE tables with many small files; VACUUM dry run (`vacuum=true` deletes) |
+| `ecommerce-setup/01-first-time-setup` | First run | Generate or load the source data and run the pipeline |
+| `ecommerce-export-showcase/04-export-dashboard-snapshot` | On demand | Export the dashboard datasets to `docs/sample_output` |
+| `ecommerce-delta-inspect/ops-delta-time-travel-inspect` | On demand | Delta history, time travel and Change Data Feed (read-only) |
 | Demos | On demand | `simulate-changes`, `bronze-health`, `simulate-bronze-loss`, `skew-demo` |
 
 The runner executes one flow run at a time (`limit=1`). Tasks retry 3 times with backoff (quality checks don't retry). Failed, crashed and cancelled runs post an alert naming the failed step. Migrations run at the start of each flow.

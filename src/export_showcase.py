@@ -6,7 +6,7 @@ against Postgres (load_all); `python export_showcase.py` writes the same results
 database is available. Business metrics come from dbt Gold models; operations and data quality from the
 audit schema.
 
-Usage: python export_showcase.py   (Prefect deployment ecommerce-export-showcase/run)
+Usage: python export_showcase.py   (Prefect deployment ecommerce-export-showcase/04-export-dashboard-snapshot)
 """
 import os
 from datetime import UTC, datetime
@@ -153,8 +153,9 @@ def main():
     meta = data["metadata"].iloc[0]
     md = ["# Sample output", "",
           "A snapshot of what the pipeline produces, exported from the Postgres warehouse by "
-          "`src/export_showcase.py` (Prefect deployment `ecommerce-export-showcase/run`). The Streamlit dashboard "
-          "shows the same datasets. Regenerate it after a run and commit it to refresh this page.", "",
+          "`src/export_showcase.py` (Prefect deployment `ecommerce-export-showcase/04-export-dashboard-snapshot`). "
+          "The Streamlit dashboard shows the same datasets. "
+          "Regenerate it after a run and commit it to refresh this page.", "",
           f"- Exported: {meta['exported_at']}", f"- Orders watermark: {meta['orders_watermark']}", "",
           "## Row counts per layer", "", md_table(data["row_counts"], max_rows=len(data["row_counts"]))]
     section = None

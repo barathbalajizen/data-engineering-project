@@ -31,9 +31,9 @@ run() {   # run a deployment and fail if the flow run does not complete
   echo "$out" | grep -q "finished successfully" || { echo "flow run failed: $*"; exit 1; }
 }
 
-run 'ecommerce-setup/run' -p n_orders="$N_ORDERS"
-run 'ecommerce-daily/daily'
-run 'ecommerce-daily/daily'
+run 'ecommerce-setup/01-first-time-setup' -p n_orders="$N_ORDERS"
+run 'ecommerce-daily/02-daily-incremental-load'
+run 'ecommerce-daily/02-daily-incremental-load'
 
 echo "::group::tests (unit + integration)"
 exec_pipeline pytest tests -q -p no:cacheprovider

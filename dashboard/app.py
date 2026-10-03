@@ -63,7 +63,7 @@ def dataset(data, name, what):
     df = data.get(name)
     if df is None:
         st.info(f"{what}: not available in this data source (`{name}`). Run the pipeline and "
-                "`ecommerce-export-showcase/run` to refresh the snapshot.")
+                "`ecommerce-export-showcase/04-export-dashboard-snapshot` to refresh the snapshot.")
     return df
 
 
@@ -271,9 +271,10 @@ def quality_tab(data):
 data, source, live_problem = load()
 if not data:
     st.error(f"No data to show: {live_problem or 'no snapshot in docs/sample_output'}.")
-    st.markdown("1. Open Prefect at http://localhost:4200 and run **`ecommerce-setup/run`** (loads data and runs "
-                "the whole pipeline, about 5 minutes).\n2. Refresh this page.\n3. Optional: run "
-                "**`ecommerce-export-showcase/run`** and commit `docs/sample_output/` so others see the data too.")
+    st.markdown("1. Open Prefect at http://localhost:4200 and run **`ecommerce-setup/01-first-time-setup`** "
+                "(loads data and runs the whole pipeline, about 5 minutes).\n2. Refresh this page.\n"
+                "3. Optional: run **`ecommerce-export-showcase/04-export-dashboard-snapshot`** and commit "
+                "`docs/sample_output/` so others see the data too.")
     st.stop()
 if live_problem:
     st.warning(f"Showing the committed snapshot because {live_problem}.")

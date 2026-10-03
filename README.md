@@ -107,7 +107,7 @@ Before writing, [`schema_drift.py`](src/schema_drift.py) compares the source sch
 Every change and its action is recorded in `audit.schema_changes`. To accept a rejected change on purpose, change the Bronze table explicitly (for example rewrite it with the new schema) and rerun. Without this check, Delta MERGE would silently drop new source columns.
 
 #### Time travel and Change Data Feed
-Bronze tables keep 30 days of history (`BRONZE_LOG_RETENTION`). `bronze/orders` has **Change Data Feed** enabled, so downstream steps can read only the rows that changed. The `ecommerce-delta-inspect/run` deployment (read-only) shows a table's `history`, compares an old version with today (`as-of`), or lists the `changes` between versions.
+Bronze tables keep 30 days of history (`BRONZE_LOG_RETENTION`). `bronze/orders` has **Change Data Feed** enabled, so downstream steps can read only the rows that changed. The `ecommerce-delta-inspect/ops-delta-time-travel-inspect` deployment (read-only) shows a table's `history`, compares an old version with today (`as-of`), or lists the `changes` between versions.
 
 ### 3. Silver: cleaning and validation
 [`transform_silver.py`](src/transform_silver.py) trims strings, validates every row, deduplicates, and loads Silver idempotently.
@@ -218,9 +218,9 @@ The first build takes 10–15 minutes (Java, Spark, Delta, Prefect, dbt). It sta
 Go to **http://localhost:4200** → **Deployments**. To run one, click it, then **Run → Quick run** (or **Custom run** to change parameters).
 
 ### Step 3: Load data and run the full pipeline
-Run **`ecommerce-setup/run`**. It generates the data, loads the source database and runs the whole pipeline once (a few minutes). Open the run to see the task timeline and logs, and the **Artifacts** tab for the run summary.
+Run **`ecommerce-setup/01-first-time-setup`**. It generates the data, loads the source database and runs the whole pipeline once (a few minutes). Open the run to see the task timeline and logs, and the **Artifacts** tab for the run summary.
 
-> To use the real Olist dataset instead of generated data, put its six CSV files (`olist_customers_dataset.csv`, `olist_orders_dataset.csv`, `olist_order_items_dataset.csv`, `olist_order_payments_dataset.csv`, `olist_products_dataset.csv`, `olist_sellers_dataset.csv`) in `data/raw/` and run `ecommerce-setup/run` with `generate_csvs = false`.
+> To use the real Olist dataset instead of generated data, put its six CSV files (`olist_customers_dataset.csv`, `olist_orders_dataset.csv`, `olist_order_items_dataset.csv`, `olist_order_payments_dataset.csv`, `olist_products_dataset.csv`, `olist_sellers_dataset.csv`) in `data/raw/` and run `ecommerce-setup/01-first-time-setup` with `generate_csvs = false`.
 
 ### Step 4: Open the dashboard
 ```bash
@@ -229,22 +229,22 @@ docker compose --profile dashboard up -d --build
 Go to **http://localhost:8501**.
 
 ### Step 5 (optional): Publish the results
-Run **`ecommerce-export-showcase/run`**, then commit and push `docs/sample_output/`. For a public dashboard link, create an app on [share.streamlit.io](https://share.streamlit.io) from this repo with main file `dashboard/app.py`.
+Run **`ecommerce-export-showcase/04-export-dashboard-snapshot`**, then commit and push `docs/sample_output/`. For a public dashboard link, create an app on [share.streamlit.io](https://share.streamlit.io) from this repo with main file `dashboard/app.py`.
 
 ### All deployments
 
 | Deployment | What it does |
 |---|---|
-| `ecommerce-setup/run` | First-time setup: generate data, load the source, run the pipeline. Parameters: `n_orders` (20000), `generate_csvs`, `run_pipeline_after` |
-| `ecommerce-daily/daily` | Incremental load: Bronze → Silver → staging → dbt → checks. Scheduled daily at 02:00 (`DAILY_CRON`, `SCHEDULE_TZ`). Parameters: `start_from`, `stop_after` (partial run), `resume_failed` (continue the latest failed run) |
-| `ecommerce-backfill/backfill` | Reprocess orders in `[start, end)`. Parameters: `start`, `end`, `chunk_days` (31), `rebuild_downstream` |
-| `ecommerce-simulate-changes/run` | Simulate a day of changes: 200 orders delivered, 100 customers move, 500 new orders |
-| `ecommerce-bronze-health/run` | Row counts per layer and the number of duplicate versions (should be 0) |
-| `ecommerce-simulate-bronze-loss/run` | Delete a date range from Bronze to practise recovery. Parameters: `start`, `end` |
-| `ecommerce-skew-demo/run` | Data-skew comparison. Parameters: `rows`, `hot_share`, `salts` |
-| `ecommerce-export-showcase/run` | Export a result snapshot to `docs/sample_output/` |
-| `ecommerce-delta-inspect/run` | Read-only Delta history, time travel (`as-of`) and Change Data Feed (`changes`). Parameters: `action`, `table` (e.g. `bronze/orders`), `version`, `timestamp`, `from_version` |
-| `ecommerce-lake-maintenance/weekly` | Weekly (Sunday 03:00, `MAINTENANCE_CRON`): OPTIMIZE Delta tables with many small files, VACUUM dry run. Parameters: `min_files`, `small_file_mb`, `vacuum` (really delete files older than the 7-day retention) |
+| `ecommerce-setup/01-first-time-setup` | First-time setup: generate data, load the source, run the pipeline. Parameters: `n_orders` (20000), `generate_csvs`, `run_pipeline_after` |
+| `ecommerce-daily/02-daily-incremental-load` | Incremental load: Bronze → Silver → staging → dbt → checks. Scheduled daily at 02:00 (`DAILY_CRON`, `SCHEDULE_TZ`). Parameters: `start_from`, `stop_after` (partial run), `resume_failed` (continue the latest failed run) |
+| `ecommerce-backfill/03-backfill-date-range` | Reprocess orders in `[start, end)`. Parameters: `start`, `end`, `chunk_days` (31), `rebuild_downstream` |
+| `ecommerce-simulate-changes/demo-simulate-source-changes` | Simulate a day of changes: 200 orders delivered, 100 customers move, 500 new orders |
+| `ecommerce-bronze-health/ops-layer-health-check` | Row counts per layer and the number of duplicate versions (should be 0) |
+| `ecommerce-simulate-bronze-loss/demo-simulate-bronze-data-loss` | Delete a date range from Bronze to practise recovery. Parameters: `start`, `end` |
+| `ecommerce-skew-demo/demo-data-skew-joins` | Data-skew comparison. Parameters: `rows`, `hot_share`, `salts` |
+| `ecommerce-export-showcase/04-export-dashboard-snapshot` | Export a result snapshot to `docs/sample_output/` |
+| `ecommerce-delta-inspect/ops-delta-time-travel-inspect` | Read-only Delta history, time travel (`as-of`) and Change Data Feed (`changes`). Parameters: `action`, `table` (e.g. `bronze/orders`), `version`, `timestamp`, `from_version` |
+| `ecommerce-lake-maintenance/ops-weekly-lake-maintenance` | Weekly (Sunday 03:00, `MAINTENANCE_CRON`): OPTIMIZE Delta tables with many small files, VACUUM dry run. Parameters: `min_files`, `small_file_mb`, `vacuum` (really delete files older than the 7-day retention) |
 
 ---
 
@@ -254,11 +254,11 @@ After Step 3, these show the main features:
 
 | Feature | What to do | What you should see |
 |---|---|---|
-| **Incremental load + SCD2** | Run `ecommerce-simulate-changes/run`, then `ecommerce-daily/daily` | Only about 700 changed rows are extracted; 100 customers get a second row in `analytics.dim_customer` |
-| **Idempotency** | Run `ecommerce-daily/daily` again, then `ecommerce-bronze-health/run` | 0 new versions inserted, `DUPLICATE versions=0` |
-| **Backfill / recovery** | Run `ecommerce-simulate-bronze-loss/run` with `start=2017-03-01`, `end=2017-04-01`, then `ecommerce-backfill/backfill` with the same dates | The health check shows rows missing, then restored; the watermark is unchanged |
-| **Retries** | Start `ecommerce-daily/daily`, run `docker compose stop postgres` during `extract-bronze`, then `docker compose start postgres` | The task goes to *AwaitingRetry* and succeeds on the next attempt |
-| **Data skew** | Run `ecommerce-skew-demo/run` | A timing comparison of naive, broadcast, salted and AQE joins in the task log |
+| **Incremental load + SCD2** | Run `ecommerce-simulate-changes/demo-simulate-source-changes`, then `ecommerce-daily/02-daily-incremental-load` | Only about 700 changed rows are extracted; 100 customers get a second row in `analytics.dim_customer` |
+| **Idempotency** | Run `ecommerce-daily/02-daily-incremental-load` again, then `ecommerce-bronze-health/ops-layer-health-check` | 0 new versions inserted, `DUPLICATE versions=0` |
+| **Backfill / recovery** | Run `ecommerce-simulate-bronze-loss/demo-simulate-bronze-data-loss` with `start=2017-03-01`, `end=2017-04-01`, then `ecommerce-backfill/03-backfill-date-range` with the same dates | The health check shows rows missing, then restored; the watermark is unchanged |
+| **Retries** | Start `ecommerce-daily/02-daily-incremental-load`, run `docker compose stop postgres` during `extract-bronze`, then `docker compose start postgres` | The task goes to *AwaitingRetry* and succeeds on the next attempt |
+| **Data skew** | Run `ecommerce-skew-demo/demo-data-skew-joins` | A timing comparison of naive, broadcast, salted and AQE joins in the task log |
 
 Query the warehouse directly at `localhost:5433` (user `de`, password `de`, database `shop`):
 ```sql
@@ -372,9 +372,9 @@ DBT_PROFILES_DIR=dbt_project dbt parse --project-dir dbt_project
 | Build fails while downloading | Check your internet and run `docker compose build` again |
 | Deployments missing in Prefect | Check `docker compose logs pipeline`, then `docker compose restart pipeline` |
 | Run stuck in *Late* / *Scheduled* | Another run is in progress (one at a time), or the `pipeline` container is down |
-| Run fails with missing CSVs | Run `ecommerce-setup/run` first |
+| Run fails with missing CSVs | Run `ecommerce-setup/01-first-time-setup` first |
 | A task failed | Open the run in Prefect and read the task log, then fix the cause. Run `ecommerce-daily` with `resume_failed = true` to continue from the failed step (or **Retry** the whole run). All steps are safe to rerun |
-| Dashboard says "No data to show" | Run `ecommerce-setup/run`, then refresh the page |
+| Dashboard says "No data to show" | Run `ecommerce-setup/01-first-time-setup`, then refresh the page |
 | Spark out of memory | Give Docker 8 GB, or use a smaller `n_orders` / `rows` |
 | Port 5433 / 4200 / 8501 in use | Change the left side of the port mapping in `docker-compose.yml` |
 | `init.sql` changes not applied | It only runs on a fresh volume: `docker compose down -v` |

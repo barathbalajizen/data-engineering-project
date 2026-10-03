@@ -1,6 +1,6 @@
 # Sample output
 
-A snapshot of what the pipeline produces, exported from the Postgres warehouse by `src/export_showcase.py` (Prefect deployment `ecommerce-export-showcase/run`). The Streamlit dashboard shows the same datasets. Regenerate it after a run and commit it to refresh this page.
+A snapshot of what the pipeline produces, exported from the Postgres warehouse by `src/export_showcase.py` (Prefect deployment `ecommerce-export-showcase/04-export-dashboard-snapshot`). The Streamlit dashboard shows the same datasets. Regenerate it after a run and commit it to refresh this page.
 
 - Exported: 2026-10-03 15:36 UTC
 - Orders watermark: 2018-08-30 23:44:41

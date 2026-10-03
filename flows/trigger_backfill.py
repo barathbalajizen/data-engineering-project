@@ -16,7 +16,7 @@ ap.add_argument("--skip-downstream", action="store_true", help="only refill Bron
 a = ap.parse_args()
 
 run = run_deployment(
-    name="ecommerce-backfill/backfill",
+    name="ecommerce-backfill/03-backfill-date-range",
     parameters={"start": a.start, "end": a.end, "chunk_days": a.chunk_days,
                 "rebuild_downstream": not a.skip_downstream},
     timeout=0,   # do not wait for completion
