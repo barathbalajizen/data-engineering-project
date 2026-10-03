@@ -40,8 +40,8 @@ def decide_mode(checkpoint, bronze_version, cdf_since, target_exists, force_full
 class PgCheckpointStore:
     """control.silver_checkpoint in Postgres."""
 
-    def __init__(self, engine):
-        self.eng = engine
+    def __init__(self, engine, run_id=None):
+        self.eng, self.run_id = engine, run_id
 
     @retry(attempts=3, base_delay=2)
     def get(self, table):
@@ -53,7 +53,9 @@ class PgCheckpointStore:
     @retry(attempts=3, base_delay=2)
     def set(self, table, version, mode):
         import sqlalchemy as sa
+        from checkpoints import set_run_context
         with self.eng.begin() as c:
+            set_run_context(c, self.run_id)
             c.execute(sa.text(
                 "INSERT INTO control.silver_checkpoint (table_name, bronze_version, mode, updated_at) "
                 "VALUES (:t, :v, :m, now()) ON CONFLICT (table_name) DO UPDATE "

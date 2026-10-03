@@ -22,7 +22,7 @@ from delta.tables import DeltaTable
 from pyspark.sql import functions as F
 
 from audit import audit_step, delta_version, delta_write_counts, make_batch_id
-from common import bronze_path, get_engine, get_logger, get_spark, quarantine_path, silver_path
+from common import RUN_ID, bronze_path, get_engine, get_logger, get_spark, quarantine_path, silver_path
 from delta_utils import cdf_enabled_since, is_delta, read_changes, schema_evolution
 from incremental import FULL, INCREMENTAL, SKIP, PgCheckpointStore, decide_mode
 from transforms import classify_versions, clean_strings, dedupe_latest
@@ -226,7 +226,7 @@ def transform_table(spark, eng, table, s, store, force_full=False):
 def main():
     args = parse_args()
     spark, eng = get_spark("transform_silver"), get_engine()
-    store = PgCheckpointStore(eng)
+    store = PgCheckpointStore(eng, RUN_ID)
     try:
         for table, s in SPECS.items():
             transform_table(spark, eng, table, s, store, args.full_refresh)

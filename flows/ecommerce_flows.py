@@ -1,6 +1,8 @@
 """Prefect flows for the e-commerce pipeline.
 
 ecommerce-daily     scheduled (see serve.py): extract -> silver -> staging -> dbt -> quality checks
+                    on demand: start_from / stop_after run part of it; resume_failed=true continues the latest
+                    failed daily run from the step that failed (found in the audit log)
 ecommerce-backfill  manual, parameterised: re-extract [start, end) in chunks, then rebuild downstream
 
 Each step runs the existing script in a subprocess (Spark/JVM isolation, scripts stay runnable
@@ -19,6 +21,7 @@ import subprocess
 import sys
 import threading
 import urllib.request
+from typing import Literal
 
 from prefect import flow, get_run_logger, task
 from prefect.runtime import flow_run, task_run
@@ -28,7 +31,11 @@ PY = os.getenv("PIPELINE_PYTHON", "/opt/venv/bin/python")
 sys.path.insert(0, SRC)
 
 from audit import audit_step  # noqa: E402
+from pipeline_plan import STEPS, plan_steps, resume_point  # noqa: E402
 from windowing import split_window  # noqa: E402
+
+# Shown as a dropdown in the Prefect UI (Run > Custom run)
+StepName = Literal["extract-bronze", "transform-silver", "load-warehouse", "dbt-build", "quality-checks"]
 
 # 3 retries, waiting 1, 2 then 4 minutes
 RETRIES = dict(retries=3, retry_delay_seconds=[60, 120, 240])
@@ -86,9 +93,30 @@ def _run_streaming(cmd, timeout, env):
         raise RuntimeError(f"{os.path.basename(cmd[1])} exited with code {rc}. Last output:\n" + "\n".join(tail))
 
 
+def failed_step_hint(run_id):
+    """'failed at <step>; resume with ...' from the audit log (best effort, never raises)."""
+    try:
+        import sqlalchemy as sa
+        from common import get_engine
+
+        eng = get_engine()
+        try:
+            with eng.connect() as c:
+                rows = c.execute(sa.text("SELECT task_name, status FROM audit.pipeline_run_log "
+                                         "WHERE pipeline_run_id = :r AND level = 'task' ORDER BY id"),
+                                 {"r": str(run_id)}).fetchall()
+        finally:
+            eng.dispose()
+        step = resume_point([tuple(r) for r in rows])
+        return f" | failed at {step}; resume: run ecommerce-daily with resume_failed=true" if step else ""
+    except Exception:
+        return ""
+
+
 def notify_failure(flow, flow_run, state):
-    """Flow hook (failed or crashed). Posts to ALERT_WEBHOOK_URL (Slack-compatible) when set."""
-    msg = f"PIPELINE FAILURE flow={flow.name} run={flow_run.name} id={flow_run.id} state={state.name}: {state.message}"
+    """Flow hook (failed, crashed or cancelled). Posts to ALERT_WEBHOOK_URL (Slack-compatible) when set."""
+    msg = (f"PIPELINE FAILURE flow={flow.name} run={flow_run.name} id={flow_run.id} state={state.name}: "
+           f"{state.message}{failed_step_hint(flow_run.id) if flow.name == 'ecommerce-daily' else ''}")
     logging.getLogger("pipeline.alert").error(msg)
     url = os.getenv("ALERT_WEBHOOK_URL")
     if url:
@@ -196,29 +224,81 @@ def publish_run_summary(kind: str, details: dict | None = None):
         log.warning("could not publish run summary: %s", exc)
 
 
+@task(name="find-resume-point", retries=2, retry_delay_seconds=10)
+def find_resume_point() -> str | None:
+    """First step that did not succeed in the latest daily run, or None when that run succeeded."""
+    import sqlalchemy as sa
+    from common import get_engine
+
+    log = get_run_logger()
+    eng = get_engine()
+    try:
+        with eng.connect() as c:
+            last = c.execute(sa.text(
+                "SELECT pipeline_run_id, status FROM audit.pipeline_run_log WHERE level = 'flow' "
+                "AND task_name = 'ecommerce-daily' AND pipeline_run_id <> :me ORDER BY id DESC LIMIT 1"),
+                {"me": str(flow_run.id)}).first()
+            if last is None:
+                log.info("no previous daily run in the audit log")
+                return None
+            rows = c.execute(sa.text("SELECT task_name, status FROM audit.pipeline_run_log "
+                                     "WHERE pipeline_run_id = :r AND level = 'task' ORDER BY id"),
+                             {"r": last[0]}).fetchall()
+    finally:
+        eng.dispose()
+    if last[1] == "SUCCESS":
+        log.info("latest daily run %s succeeded: nothing to resume", last[0])
+        return None
+    step = resume_point([tuple(r) for r in rows])
+    log.info("latest daily run %s ended %s; resuming from %s", last[0], last[1], step)
+    return step
+
+
 # ------------------------------------------------------------------- flows
-def run_pipeline_steps():
-    """The standard load, in order. Shared by the daily flow and the setup flow."""
-    extract_bronze()
-    transform_silver()
-    load_warehouse()
-    dbt_build()
-    quality_checks()
+def step_tasks():
+    """Pipeline step name -> Prefect task (looked up at call time). The order is pipeline_plan.STEPS."""
+    return {"extract-bronze": extract_bronze, "transform-silver": transform_silver,
+            "load-warehouse": load_warehouse, "dbt-build": dbt_build, "quality-checks": quality_checks}
 
 
-@flow(name="ecommerce-daily", log_prints=True, on_failure=[notify_failure], on_crashed=[notify_failure])
-def daily_pipeline():
-    """Incremental daily load: Bronze -> Silver -> Postgres staging -> dbt Gold -> data quality checks."""
-    migrate_db()
+def run_pipeline_steps(steps=STEPS):
+    """Run pipeline steps in order; each one starts only after the previous one succeeded (a failure stops
+    the run). Shared by the daily flow and the setup flow."""
+    tasks = step_tasks()
+    for name in steps:
+        tasks[name]()
+
+
+HOOKS = dict(on_failure=[notify_failure], on_crashed=[notify_failure], on_cancellation=[notify_failure])
+
+
+@flow(name="ecommerce-daily", log_prints=True, **HOOKS)
+def daily_pipeline(start_from: StepName | None = None, stop_after: StepName | None = None,
+                   resume_failed: bool = False):
+    """Incremental daily load: Bronze -> Silver -> Postgres staging -> dbt Gold -> data quality checks.
+
+    start_from / stop_after: run only part of the pipeline (every step is idempotent, so any start is safe).
+    resume_failed: continue the latest failed daily run from the step where it failed; does nothing when
+    the latest daily run succeeded.
+    """
+    log = get_run_logger()
+    if resume_failed and start_from:
+        raise ValueError("use either start_from or resume_failed, not both")
+    migrate_db()   # also marks rows of a crashed run ABANDONED, so resume can see where it stopped
+    if resume_failed:
+        start_from = find_resume_point()
+        if start_from is None:
+            return
+    steps = plan_steps(start_from, stop_after)
+    log.info("steps: %s", " > ".join(steps))
     try:
         with flow_audit():
-            run_pipeline_steps()
+            run_pipeline_steps(steps)
     finally:
-        publish_run_summary("daily")
+        publish_run_summary("daily", {"Steps": " > ".join(steps)} if len(steps) < len(STEPS) else None)
 
 
-@flow(name="ecommerce-backfill", flow_run_name="backfill-{start}-to-{end}", log_prints=True,
-      on_failure=[notify_failure], on_crashed=[notify_failure])
+@flow(name="ecommerce-backfill", flow_run_name="backfill-{start}-to-{end}", log_prints=True, **HOOKS)
 def backfill_pipeline(start: str, end: str, chunk_days: int = 31, rebuild_downstream: bool = True):
     """Manual backfill of orders whose updated_at is in [start, end).
 
@@ -236,10 +316,7 @@ def backfill_pipeline(start: str, end: str, chunk_days: int = 31, rebuild_downst
                 extract_bronze.with_options(
                     task_run_name=f"extract {lo[:10]} to {hi[:10]} ({i}/{len(windows)})")(lo, hi)
             if rebuild_downstream:
-                transform_silver()
-                load_warehouse()
-                dbt_build()
-                quality_checks()
+                run_pipeline_steps(plan_steps(start_from="transform-silver"))
     finally:
         publish_run_summary("backfill", {"Window": f"[{start}, {end})", "Chunks": len(windows),
                                          "Downstream rebuilt": rebuild_downstream})

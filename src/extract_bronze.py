@@ -18,14 +18,13 @@ Data Feed enabled so downstream steps can read only what changed.
 import argparse
 import os
 
-import sqlalchemy as sa
 from delta.tables import DeltaTable
 from pyspark.sql import functions as F
 
 from audit import audit_step, delta_version, delta_write_counts, make_batch_id
+from checkpoints import advance_watermark, get_watermark
 from common import RUN_ID, bronze_path, get_engine, get_logger, get_spark, jdbc_read
 from delta_utils import align_to_target, delta_schema, ensure_table_properties, schema_evolution
-from resilience import retry
 from schema_drift import compare_schemas, enforce, schema_dict
 from windowing import extraction_window
 
@@ -64,19 +63,6 @@ def parse_args():
                    default=int(os.getenv("WATERMARK_LOOKBACK_MINUTES", "10")),
                    help="overlap window re-read on normal incremental runs")
     return p.parse_args()
-
-
-@retry(attempts=3, base_delay=2)
-def get_watermark(eng, table):
-    with eng.connect() as c:
-        return c.execute(sa.text("SELECT last_watermark FROM control.watermark WHERE table_name=:t"), {"t": table}).scalar()
-
-
-@retry(attempts=3, base_delay=2)
-def set_watermark(eng, table, value):
-    with eng.begin() as c:
-        c.execute(sa.text("UPDATE control.watermark SET last_watermark=:w, updated_at=now() WHERE table_name=:t"),
-                  {"w": value, "t": table})
 
 
 def check_schema(spark, a, table, src_df):
@@ -159,8 +145,8 @@ def extract_table(spark, eng, args, table, cfg):
                      table, n, a.inserted, n - a.inserted)
             if not is_backfill:
                 new_wm = df.agg(F.max(col)).first()[0]
-                if new_wm is not None and new_wm > wm:   # never move the watermark backwards
-                    set_watermark(eng, table, new_wm)    # only AFTER a successful write
+                # only AFTER a successful write; advance_watermark never moves it backwards
+                if new_wm is not None and advance_watermark(eng, table, new_wm, RUN_ID):
                     log.info("%s: watermark %s -> %s", table, wm, new_wm)
             else:
                 log.info("%s: backfill, watermark left untouched", table)

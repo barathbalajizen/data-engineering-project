@@ -141,11 +141,14 @@ The [dbt project](dbt_project/) has three layers:
 **Scorecard:** `audit.dq_scorecard` scores every run (checks, passed, warned, failed, pass rate, and a health score where a warning counts as half). `audit.dq_scorecard_by_category` breaks it down by category. A critical failure fails the pipeline.
 
 ### 7. Orchestration with Prefect
-[`flows/`](flows/) wraps every step as a Prefect task:
-- **Daily schedule** (cron, configurable time zone) for the incremental load.
-- **Retries**: 3 attempts with backoff (1, 2, then 4 minutes). A failed dbt build resumes with `dbt retry` from the failed model.
-- **Alerts**: failure and crash hooks post to a Slack-compatible webhook (`ALERT_WEBHOOK_URL`).
-- **Monitoring**: full logs, task timeline, and a run-summary artifact (row counts, watermark, quality results) for each run.
+[`flows/`](flows/) wraps every step as a Prefect task. The step order and dependencies are defined once in [`pipeline_plan.py`](src/pipeline_plan.py): `extract-bronze` → `transform-silver` → `load-warehouse` → `dbt-build` → `quality-checks`. Each step starts only after the previous one succeeded.
+- **Scheduled and on-demand runs**: a daily cron schedule (configurable time zone), or any time from the UI.
+- **Partial reruns**: `start_from` / `stop_after` (dropdowns in *Custom run*) run part of the pipeline. Every step is idempotent, so any starting point is safe.
+- **Resume after a failure**: `resume_failed = true` reads the audit log, finds the step where the latest daily run failed (or crashed), and continues from there without redoing the steps that succeeded. A failed dbt build also resumes with `dbt retry` from the failed model.
+- **Retries**: 3 attempts with backoff (1, 2, then 4 minutes). The quality checks do not retry, because bad data is not a temporary problem.
+- **Failure handling**: failure, crash and cancellation hooks post to a Slack-compatible webhook (`ALERT_WEBHOOK_URL`), naming the failed step and how to resume. Rows left "running" by a crash are marked `ABANDONED` at the next start.
+- **Safe checkpoints**: the extract watermark can only move forward (enforced in the `UPDATE` itself), and it moves only after a successful write. The Silver checkpoint moves only after Silver and the quarantine are written. A database trigger records every change in `control.checkpoint_history`, together with the run that made it.
+- **Execution history**: every flow run, task attempt and table load is in `audit.pipeline_run_log`. `audit.v_flow_runs` gives one row per run (status, duration, attempts, retries, first failed task, rows). `audit.v_task_stats` gives one row per task (success rate, median/p95 duration, last status). Prefect's UI keeps logs, timelines and a run-summary artifact for each run.
 - **No overlapping runs** (`limit=1`), so a backfill and the daily run never collide.
 
 ### 8. Backfill and recovery
@@ -195,7 +198,7 @@ Run **`ecommerce-export-showcase/run`**, then commit and push `docs/sample_outpu
 | Deployment | What it does |
 |---|---|
 | `ecommerce-setup/run` | First-time setup: generate data, load the source, run the pipeline. Parameters: `n_orders` (20000), `generate_csvs`, `run_pipeline_after` |
-| `ecommerce-daily/daily` | Incremental load: Bronze → Silver → staging → dbt → checks. Scheduled daily at 02:00 (`DAILY_CRON`, `SCHEDULE_TZ`) |
+| `ecommerce-daily/daily` | Incremental load: Bronze → Silver → staging → dbt → checks. Scheduled daily at 02:00 (`DAILY_CRON`, `SCHEDULE_TZ`). Parameters: `start_from`, `stop_after` (partial run), `resume_failed` (continue the latest failed run) |
 | `ecommerce-backfill/backfill` | Reprocess orders in `[start, end)`. Parameters: `start`, `end`, `chunk_days` (31), `rebuild_downstream` |
 | `ecommerce-simulate-changes/run` | Simulate a day of changes: 200 orders delivered, 100 customers move, 500 new orders |
 | `ecommerce-bronze-health/run` | Row counts per layer and the number of duplicate versions (should be 0) |
@@ -317,7 +320,7 @@ DBT_PROFILES_DIR=dbt_project dbt parse --project-dir dbt_project
 | Deployments missing in Prefect | Check `docker compose logs pipeline`, then `docker compose restart pipeline` |
 | Run stuck in *Late* / *Scheduled* | Another run is in progress (one at a time), or the `pipeline` container is down |
 | Run fails with missing CSVs | Run `ecommerce-setup/run` first |
-| A task failed | Open the run in Prefect and read the task log; fix the cause and click **Retry**. All steps are safe to rerun |
+| A task failed | Open the run in Prefect and read the task log, then fix the cause. Run `ecommerce-daily` with `resume_failed = true` to continue from the failed step (or **Retry** the whole run). All steps are safe to rerun |
 | Dashboard says "No data to show" | Run `ecommerce-setup/run`, then refresh the page |
 | Spark out of memory | Give Docker 8 GB, or use a smaller `n_orders` / `rows` |
 | Port 5433 / 4200 / 8501 in use | Change the left side of the port mapping in `docker-compose.yml` |
