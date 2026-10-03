@@ -19,6 +19,17 @@ TASK_NAME = os.getenv("TASK_NAME", "-")
 JDBC_URL = f"jdbc:postgresql://{PG['host']}:{PG['port']}/{PG['db']}"
 JDBC_JAR = os.getenv("PG_JDBC_JAR", "/opt/jars/postgresql.jar")
 
+# Performance settings (measured in docs/performance.md)
+SPARK_MASTER = os.getenv("SPARK_MASTER", "local[2]")
+SHUFFLE_PARTITIONS = os.getenv("SPARK_SHUFFLE_PARTITIONS", "8")
+# The Postgres JDBC driver buffers the WHOLE result set unless a fetch size is set (and autocommit is off,
+# which Spark does for reads): rows are then streamed in batches of this size.
+JDBC_FETCH_SIZE = int(os.getenv("JDBC_FETCH_SIZE", "10000"))
+JDBC_BATCH_SIZE = int(os.getenv("JDBC_BATCH_SIZE", "10000"))   # rows per INSERT batch (Spark default: 1000)
+JDBC_WRITE_PARTITIONS = int(os.getenv("JDBC_WRITE_PARTITIONS", "4"))   # parallel connections for large writes
+JDBC_ROWS_PER_WRITER = 50000   # below this a table is written over one connection (no extra shuffle)
+ROWS_PER_FILE = int(os.getenv("DELTA_ROWS_PER_FILE", "1000000"))   # target rows per Delta data file
+
 
 class JsonFormatter(logging.Formatter):
     """One JSON object per line (LOG_FORMAT=json), with run and task ids for log search tools."""
@@ -58,12 +69,12 @@ def get_spark(app_name: str, ui: bool = False):
 
     builder = (
         SparkSession.builder.appName(app_name)
-        .master("local[2]")
+        .master(SPARK_MASTER)
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
         .config("spark.jars", JDBC_JAR)
         .config("spark.driver.memory", os.getenv("SPARK_DRIVER_MEMORY", "2g"))
-        .config("spark.sql.shuffle.partitions", "8")
+        .config("spark.sql.shuffle.partitions", SHUFFLE_PARTITIONS)
         .config("spark.sql.session.timeZone", "UTC")
         .config("spark.driver.extraJavaOptions", "-Duser.timezone=UTC")
         .config("spark.ui.enabled", "true" if ui else "false")
@@ -81,12 +92,21 @@ def jdbc_read(spark, dbtable: str):
         .option("user", PG["user"])
         .option("password", PG["password"])
         .option("driver", "org.postgresql.Driver")
+        .option("fetchsize", str(JDBC_FETCH_SIZE))
         .load()
     )
 
 
-def jdbc_write_overwrite(df, dbtable: str):
-    # truncate=true keeps the table definition and just empties it
+def jdbc_write_partitions(rows: int) -> int:
+    """Parallel JDBC writers for a table of `rows` rows: one per JDBC_ROWS_PER_WRITER, at most
+    JDBC_WRITE_PARTITIONS (measured: 200k rows 10.6s on 1 connection with batch 1000, 4.5s on 4 with 10000)."""
+    return max(1, min(JDBC_WRITE_PARTITIONS, int(rows) // JDBC_ROWS_PER_WRITER))
+
+
+def jdbc_write_overwrite(df, dbtable: str, rows: int | None = None):
+    # truncate=true keeps the table definition (and its indexes) and just empties it
+    if rows is not None:
+        df = df.repartition(jdbc_write_partitions(rows))
     (
         df.write.format("jdbc")
         .option("url", JDBC_URL)
@@ -95,9 +115,17 @@ def jdbc_write_overwrite(df, dbtable: str):
         .option("password", PG["password"])
         .option("driver", "org.postgresql.Driver")
         .option("truncate", "true")
+        .option("batchsize", str(JDBC_BATCH_SIZE))
         .mode("overwrite")
         .save()
     )
+
+
+def sized_for_write(df, rows: int):
+    """Coalesce to about ROWS_PER_FILE rows per output file (at least one). Without it a write after a
+    shuffle produces one file per shuffle partition, e.g. 8 files for a 200-row table; AQE cannot merge them
+    when the DataFrame is cached."""
+    return df.coalesce(max(1, -(-int(rows) // ROWS_PER_FILE)))
 
 
 def bronze_path(table: str) -> str:

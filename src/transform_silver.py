@@ -22,7 +22,8 @@ from delta.tables import DeltaTable
 from pyspark.sql import functions as F
 
 from audit import audit_step, delta_version, delta_write_counts, make_batch_id
-from common import RUN_ID, bronze_path, get_engine, get_logger, get_spark, quarantine_path, silver_path
+from common import (RUN_ID, bronze_path, get_engine, get_logger, get_spark, quarantine_path, silver_path,
+                    sized_for_write)
 from delta_utils import cdf_enabled_since, is_delta, read_changes, schema_evolution
 from incremental import FULL, INCREMENTAL, SKIP, PgCheckpointStore, decide_mode
 from transforms import classify_versions, clean_strings, dedupe_latest
@@ -107,7 +108,7 @@ def merge_quarantine_log(spark, invalid, table, s):
     path = quarantine_path(table)
     keys = s["keys"] + [s["version_col"]]
     if not is_delta(spark, path):
-        invalid.write.format("delta").mode("overwrite").save(path)
+        sized_for_write(invalid, invalid.count()).write.format("delta").mode("overwrite").save(path)
         return
     cond = " AND ".join(f"t.{k} = s.{k}" for k in keys)
     with schema_evolution(spark):   # adds failed_rules to quarantine tables created before rule-based checks
@@ -117,7 +118,7 @@ def merge_quarantine_log(spark, invalid, table, s):
 
 def merge_silver(spark, latest, path, s):
     if not is_delta(spark, path):
-        latest.write.format("delta").mode("overwrite").save(path)
+        sized_for_write(latest, latest.count()).write.format("delta").mode("overwrite").save(path)
         return
     cond = " AND ".join(f"t.{k} = s.{k}" for k in s["keys"])
     vc = s["version_col"]
@@ -134,8 +135,11 @@ def merge_silver(spark, latest, path, s):
 def process_incremental(spark, a, table, s, store, force_full):
     path, bpath = silver_path(table), bronze_path(table)
     bronze_v = delta_version(spark, bpath)
-    checkpoint = store.get(table)
-    mode, why = decide_mode(checkpoint, bronze_v, cdf_enabled_since(spark, bpath), is_delta(spark, path), force_full)
+    checkpoint, target_exists = store.get(table), is_delta(spark, path)
+    # Nothing new in Bronze: skip without scanning the table history for the CDF start version
+    nothing_new = not force_full and target_exists and checkpoint is not None and bronze_v == checkpoint
+    cdf_since = None if nothing_new else cdf_enabled_since(spark, bpath)
+    mode, why = decide_mode(checkpoint, bronze_v, cdf_since, target_exists, force_full)
     log.info("%s: %s (%s)", table, mode.upper(), why)
     a.source_rows = a.inserted = a.updated = a.rejected = 0
     if mode == SKIP:
@@ -197,10 +201,12 @@ def process_full(spark, a, table, s):
     latest, invalid, failures, duplicates = validate(bronze, s)
 
     # Quarantine = current set of invalid rows (full rewrite, so reruns never pile up)
-    invalid.write.format("delta").mode("overwrite").option("overwriteSchema", "true").save(quarantine_path(table))
     a.rejected = invalid.count()
+    (sized_for_write(invalid, a.rejected).write.format("delta").mode("overwrite").option("overwriteSchema", "true")
+        .save(quarantine_path(table)))
     before = delta_version(spark, path)
-    latest.write.format("delta").mode("overwrite").option("overwriteSchema", "true").save(path)
+    (sized_for_write(latest, latest.count()).write.format("delta").mode("overwrite")
+        .option("overwriteSchema", "true").save(path))
     a.inserted, a.updated, _, version = delta_write_counts(spark, path, before)
     log.info("%s: read %d, written %d, rejected %d, duplicates %d (silver version %d)",
              table, a.source_rows, a.inserted, a.rejected, duplicates, version)

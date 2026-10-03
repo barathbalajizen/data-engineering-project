@@ -3,17 +3,24 @@
     materialized='incremental',
     unique_key='payment_key',
     incremental_strategy='delete+insert',
-    on_schema_change='append_new_columns'
+    on_schema_change='append_new_columns',
+    post_hook=[
+        "{{ fact_index(this, 'payment_key', unique=True) }}",
+    ]
 ) }}
 
-select
-    md5(p.order_id || '-' || p.payment_sequential::text)     as payment_key,
-    p.order_id,
-    p.payment_sequential,
-    p.payment_type,
-    p.payment_value,
-    to_char(p.order_purchase_timestamp, 'YYYYMMDD')::int     as date_key,
-    p.order_updated_at
-from {{ ref('int_order_payments') }} p
-{{ incremental_predicate('p.order_updated_at', 'order_updated_at',
-                         "md5(p.order_id || '-' || p.payment_sequential::text)", 'payment_key') }}
+with candidates as (
+    select
+        md5(p.order_id || '-' || p.payment_sequential::text)     as payment_key,
+        p.order_id,
+        p.payment_sequential,
+        p.payment_type,
+        p.payment_value,
+        to_char(p.order_purchase_timestamp, 'YYYYMMDD')::int     as date_key,
+        p.order_updated_at
+    from {{ ref('int_order_payments') }} p
+)
+
+select candidates.*
+from candidates
+{{ incremental_filter('candidates', 'order_updated_at', 'payment_key') }}

@@ -1,6 +1,9 @@
 services:
   postgres:
     image: postgres:15
+    # Parallel hash joins use shared memory; Docker's default /dev/shm (64 MB) is too small from ~250k rows
+    # ("could not resize shared memory segment ... No space left on device"), see docs/performance.md
+    shm_size: 256mb
     environment:
       POSTGRES_USER: de
       POSTGRES_PASSWORD: de

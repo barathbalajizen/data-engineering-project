@@ -59,7 +59,7 @@ def load_table(spark, eng, t):
         df = spark.read.format("delta").option("versionAsOf", version).load(silver_path(t))
         a.source_rows = df.count()
         add_missing_columns(eng, a, t, df.schema)
-        jdbc_write_overwrite(df, f"staging.{t}")
+        jdbc_write_overwrite(df, f"staging.{t}", a.source_rows)
         with eng.connect() as c:
             a.inserted = c.execute(sa.text(f"SELECT count(*) FROM staging.{t}")).scalar()
         a.updated, a.rejected = 0, 0

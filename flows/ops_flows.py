@@ -52,6 +52,12 @@ def delta_inspect(action: str, table: str, version: int | None, timestamp: str |
     run_cmd(cmd)
 
 
+@task(name="lake-maintenance", retries=1, retry_delay_seconds=60)
+def lake_maintenance(min_files: int, small_file_mb: float, vacuum: bool):
+    cmd = [PY, f"{SRC}/maintenance.py", "--min-files", str(min_files), "--small-file-mb", str(small_file_mb)]
+    run_cmd(cmd + (["--vacuum"] if vacuum else []), timeout=3 * 3600)
+
+
 @task(name="skew-demo", retries=0)
 def skew_demo(rows: int, hot_share: float, salts: int):
     run_cmd([PY, f"{SRC}/skew_demo.py", "--rows", str(rows), "--hot-share", str(hot_share),
@@ -118,3 +124,13 @@ def delta_inspect_flow(action: str = "history", table: str = "bronze/orders", ve
     as-of    - time travel: compare `version` or `timestamp` with the current table
     changes  - Change Data Feed from `from_version` (to `to_version`); CDF is enabled on bronze/orders"""
     delta_inspect(action, table, version, timestamp, from_version, to_version, limit)
+
+
+@flow(name="ecommerce-lake-maintenance", **HOOKS)
+def lake_maintenance_flow(min_files: int = 16, small_file_mb: float = 32, vacuum: bool = False):
+    """Compact Delta tables that have accumulated many small files (OPTIMIZE) and report what VACUUM would
+    delete. vacuum=true really deletes unreferenced files older than each table's retention (7 days), which
+    also ends time travel to versions older than that. Safe to run any time; one flow run at a time."""
+    migrate_db()
+    with flow_audit():
+        lake_maintenance(min_files, small_file_mb, vacuum)

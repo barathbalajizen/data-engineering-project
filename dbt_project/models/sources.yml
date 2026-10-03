@@ -3,7 +3,7 @@ version: 2
 sources:
   - name: staging
     description: Silver data loaded by Spark JDBC (src/load_warehouse.py). Truncated and reloaded each run.
-    schema: staging
+    schema: "{{ env_var('DBT_SOURCE_SCHEMA', 'staging') }}"   # override only for benchmarks on a copy
     # Data freshness: when NEW data last arrived (ingestion_ts is set when a row enters Bronze).
     # Warn only: a quiet day is not an error. Pipeline freshness (did the run succeed?) is checked in checks.py.
     loaded_at_field: ingestion_ts

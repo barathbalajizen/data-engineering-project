@@ -154,8 +154,20 @@ The [dbt project](dbt_project/) has three layers:
 ### 8. Backfill and recovery
 The backfill flow re-extracts any `[start, end)` date range in chunks (each chunk retries on its own), then rebuilds downstream, without moving the daily watermark. A "Bronze loss" simulation deletes a date range, so recovery can be shown end to end.
 
-### 9. Performance: data skew
-[`skew_demo.py`](src/skew_demo.py) runs the same join on a heavily skewed key four ways (naive sort-merge, broadcast, salting, Spark AQE) and prints the comparison.
+### 9. Performance: measured tuning
+Benchmarks ([`benchmark.py`](src/benchmark.py), [`benchmark_dbt.py`](src/benchmark_dbt.py)) run the real pipeline functions on copies of the data at 1x and 10x volume, and record every result in `audit.benchmark_results`. The full write-up is in **[docs/performance.md](docs/performance.md)**. Measured at 10x (200k orders):
+
+| Change | Before → after |
+|---|---|
+| dbt incremental filter rewritten as an anti-join | did not finish in 17 min → **3.3 s** |
+| JDBC writes: batch 10,000 and up to 4 connections | 10.6 s → **4.5 s** |
+| JDBC reads: fetch size 10,000 | 26.0 s → **13.2 s** |
+| Compacting 100 small files (weekly OPTIMIZE) | reads 25.7 s → **10.9 s** |
+| Silver output sized to about 1M rows per file | 8 files → **1** per small table |
+| VACUUM file listing: 8 tasks instead of 10,000 | weekly maintenance 2,718 s → **281 s** |
+| Postgres `shm_size` 256 MB | parallel hash joins no longer fail at 250k rows |
+
+Also measured and kept as they were: 8 shuffle partitions (Spark's default of 200 is 2–6x slower), `local[2]` (4 cores didn't help end to end), and only a unique index on each fact key (other indexes gave no speed-up). [`skew_demo.py`](src/skew_demo.py) compares a skewed join four ways: naive, broadcast, salting and Spark AQE.
 
 ### 10. Dashboard and published results
 [`dashboard/app.py`](dashboard/app.py) is a Streamlit app: KPIs, monthly and daily sales, revenue by category, quality-check results, rows per layer and customer history. [`export_showcase.py`](src/export_showcase.py) exports a snapshot of the results to [docs/sample_output/](docs/sample_output/README.md), so the results are visible on GitHub and the dashboard runs on Streamlit Cloud without a database.
@@ -206,6 +218,7 @@ Run **`ecommerce-export-showcase/run`**, then commit and push `docs/sample_outpu
 | `ecommerce-skew-demo/run` | Data-skew comparison. Parameters: `rows`, `hot_share`, `salts` |
 | `ecommerce-export-showcase/run` | Export a result snapshot to `docs/sample_output/` |
 | `ecommerce-delta-inspect/run` | Read-only Delta history, time travel (`as-of`) and Change Data Feed (`changes`). Parameters: `action`, `table` (e.g. `bronze/orders`), `version`, `timestamp`, `from_version` |
+| `ecommerce-lake-maintenance/weekly` | Weekly (Sunday 03:00, `MAINTENANCE_CRON`): OPTIMIZE Delta tables with many small files, VACUUM dry run. Parameters: `min_files`, `small_file_mb`, `vacuum` (really delete files older than the 7-day retention) |
 
 ---
 

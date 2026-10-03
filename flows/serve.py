@@ -9,6 +9,7 @@
   ecommerce-skew-demo/run                data-skew demo
   ecommerce-export-showcase/run          export result snapshot to docs/sample_output (for GitHub)
   ecommerce-delta-inspect/run            Delta history, time travel and Change Data Feed (read-only)
+  ecommerce-lake-maintenance/weekly      OPTIMIZE small files + VACUUM dry run (MAINTENANCE_CRON, Sunday 03:00)
 
 limit=1: only one flow run executes at a time, so runs never overlap (the others wait their turn).
 pause_on_shutdown=False: the schedule keeps running across container restarts.
@@ -19,8 +20,8 @@ from prefect import serve
 from prefect.schedules import Cron
 
 from ecommerce_flows import backfill_pipeline, daily_pipeline
-from ops_flows import (bronze_health, bronze_loss, delta_inspect_flow, export_showcase_flow, setup_demo_data,
-                       simulate_source_changes, skew_join_demo)
+from ops_flows import (bronze_health, bronze_loss, delta_inspect_flow, export_showcase_flow,
+                       lake_maintenance_flow, setup_demo_data, simulate_source_changes, skew_join_demo)
 
 if __name__ == "__main__":
     tz = os.getenv("SCHEDULE_TZ", "Asia/Kolkata")
@@ -37,5 +38,8 @@ if __name__ == "__main__":
         skew_join_demo.to_deployment(name="run", tags=["ecommerce", "demo"]),
         export_showcase_flow.to_deployment(name="run", tags=["ecommerce", "demo"]),
         delta_inspect_flow.to_deployment(name="run", tags=["ecommerce", "ops"]),
+        lake_maintenance_flow.to_deployment(name="weekly", tags=["ecommerce", "ops", "scheduled"],
+                                            schedule=Cron(os.getenv("MAINTENANCE_CRON", "0 3 * * 0"),
+                                                          timezone=tz)),
     ]
     serve(*deployments, pause_on_shutdown=False, limit=1)
