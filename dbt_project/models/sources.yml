@@ -2,16 +2,22 @@ version: 2
 
 sources:
   - name: staging
+    description: Silver data loaded by Spark JDBC (src/load_warehouse.py). Truncated and reloaded each run.
     schema: staging
+    # Data freshness: when NEW data last arrived (ingestion_ts is set when a row enters Bronze).
+    # Warn only: a quiet day is not an error. Pipeline freshness (did the run succeed?) is checked in checks.py.
+    loaded_at_field: ingestion_ts
+    freshness:
+      warn_after: {count: 24, period: hour}
     tables:
       - name: orders
         columns:
           - name: order_id
-            tests: [unique, not_null]
+            data_tests: [unique, not_null]
       - name: customers
         columns:
           - name: customer_id
-            tests: [unique, not_null]
+            data_tests: [unique, not_null]
       - name: products
       - name: sellers
       - name: order_items

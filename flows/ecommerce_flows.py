@@ -162,8 +162,10 @@ def publish_run_summary(kind: str, details: dict | None = None):
             rows = query(sql)
             return rows[0][0] if rows else "n/a"
 
-        dq = query("SELECT check_name, status, rows_failed, detail FROM audit.dq_log WHERE run_id = :r ORDER BY id",
-                   r=flow_run.id) or []
+        dq = query("SELECT check_name, status, rows_failed, detail FROM audit.dq_latest WHERE run_id = :r "
+                   "ORDER BY status <> 'FAIL', status <> 'WARN', check_name", r=flow_run.id) or []
+        score = query("SELECT checks, passed, warned, failed, pass_rate, health_score FROM audit.dq_scorecard "
+                      "WHERE run_id = :r", r=flow_run.id)
         facts = [("Flow run", f"{flow_run.name} (`{flow_run.id}`)"), ("Run type", kind)]
         facts += list((details or {}).items())
         facts += [("Orders watermark", scalar("SELECT last_watermark FROM control.watermark WHERE table_name='orders'")),
@@ -173,6 +175,9 @@ def publish_run_summary(kind: str, details: dict | None = None):
         md = f"# {kind.title()} run summary\n\n| | |\n|---|---|\n"
         md += "\n".join(f"| {k} | {v} |" for k, v in facts)
         md += "\n\n## Data quality checks\n\n"
+        if score:
+            n, p, w, f, rate, health = score[0]
+            md += f"**Scorecard:** {p}/{n} passed, {w} warnings, {f} failed (pass rate {rate}%, health {health}%)\n\n"
         if dq:
             md += "| check | status | rows failed | detail |\n|---|---|---|---|\n"
             md += "\n".join(f"| {r[0]} | {r[1]} | {r[2]} | {r[3] or ''} |" for r in dq)

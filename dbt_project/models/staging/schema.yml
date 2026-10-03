@@ -1,0 +1,64 @@
+version: 2
+
+models:
+  - name: stg_orders
+    columns:
+      - name: order_id
+        data_tests: [unique, not_null]
+      - name: customer_id
+        data_tests: [not_null]
+      - name: order_status
+        data_tests:
+          - accepted_values:
+              values: [created, approved, invoiced, processing, shipped, delivered, unavailable, canceled]
+      - name: updated_at
+        data_tests: [not_null]
+  - name: stg_customers
+    columns:
+      - name: customer_id
+        data_tests: [unique, not_null]
+  - name: stg_products
+    columns:
+      - name: product_id
+        data_tests: [unique, not_null]
+      - name: product_weight_g
+        data_tests: [non_negative]
+  - name: stg_sellers
+    columns:
+      - name: seller_id
+        data_tests: [unique, not_null]
+  - name: stg_order_items
+    data_tests:
+      - unique_combination:
+          columns: [order_id, order_item_id]
+    columns:
+      - name: order_id
+        data_tests:
+          - not_null
+          # warn: an order rejected in Silver (quarantine) leaves its items without an order
+          - relationships:
+              to: ref('stg_orders')
+              field: order_id
+              config: {severity: warn}
+      - name: price
+        data_tests: [not_null, non_negative]
+      - name: freight_value
+        data_tests: [non_negative]
+  - name: stg_order_payments
+    data_tests:
+      - unique_combination:
+          columns: [order_id, payment_sequential]
+    columns:
+      - name: order_id
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('stg_orders')
+              field: order_id
+              config: {severity: warn}
+      - name: payment_type
+        data_tests:
+          - accepted_values:
+              values: [credit_card, boleto, voucher, debit_card, not_defined]
+      - name: payment_value
+        data_tests: [non_negative]

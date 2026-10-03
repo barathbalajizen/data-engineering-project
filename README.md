@@ -109,20 +109,36 @@ Bronze tables keep 30 days of history (`BRONZE_LOG_RETENTION`). `bronze/orders` 
 [`load_warehouse.py`](src/load_warehouse.py) loads Silver into Postgres `staging` with Spark JDBC (truncate and reload, so it is safe to rerun).
 
 ### 5. Gold: dimensional model with dbt
-The [dbt project](dbt_project/) builds a **star schema** in the `analytics` schema:
+The [dbt project](dbt_project/) has three layers:
+
+| Layer | Schema | Materialization | Models |
+|---|---|---|---|
+| Staging | `analytics_stg` | views | `stg_orders`, `stg_customers`, `stg_products`, `stg_sellers`, `stg_order_items`, `stg_order_payments`: light renaming of the Spark-loaded `staging` tables |
+| Intermediate | `analytics_int` | views | `int_order_items_enriched` (items + order attributes, delivery days, late flag), `int_order_payments` |
+| Marts | `analytics` | tables (facts **incremental**) | the star schema below |
 
 | Model | Description |
 |---|---|
-| `fact_orders` | One row per order item: price, freight, delivery days, late flag |
-| `fact_payments` | One row per order payment |
+| `fact_orders` | One row per order item: price, freight, delivery days, late flag. **Incremental** |
+| `fact_payments` | One row per order payment. **Incremental** |
 | `dim_customer` | **SCD Type 2** from a dbt snapshot (`valid_from`, `valid_to`, `is_current`) |
 | `dim_product`, `dim_seller`, `dim_date` | Dimensions with surrogate keys |
 | `agg_daily_sales`, `agg_category_revenue` | Reporting aggregates for the dashboard |
 
-`fact_orders` uses a **point-in-time join**: each order links to the customer version that was valid when the order was placed. dbt tests check unique/not-null keys and fact-to-dimension relationships.
+`fact_orders` uses a **point-in-time join**: each order links to the customer version that was valid when the order was placed.
 
-### 6. Data quality checks
-[`checks.py`](src/checks.py) runs after every load and writes results to `audit.dq_log`: no duplicate versions in Bronze, row-count reconciliation (source vs Silver vs staging), unique keys, no missing customer keys in the fact table, and data freshness. A critical failure fails the pipeline.
+**Incremental facts** (`delete+insert` on the surrogate key) rebuild only the rows whose order changed since the last load, plus any key not in the table yet. The second condition matters because a record restored by a backfill has an *old* `updated_at`, and a plain "updated since the last load" filter would skip it forever ([`macros/incremental_predicate.sql`](dbt_project/macros/incremental_predicate.sql)). `dbt build --full-refresh` rebuilds them completely.
+
+**dbt tests (55):** `unique`, `not_null`, `relationships` (facts → dimensions and `dim_date`; staging items/payments → orders as *warn*, since an order rejected in Silver leaves orphans), `accepted_values` (order status, payment type, late flag), custom generic tests `non_negative` and `unique_combination` (composite keys), and two singular tests. `assert_fact_orders_complete` checks that the incremental fact matches its source exactly. `assert_revenue_reconciles` checks that the aggregate revenue equals the items. **Source freshness** warns when no new data arrived for 24 hours.
+
+### 6. Data quality checks and scorecard
+[`checks.py`](src/checks.py) runs after every load. All results go to `audit.dq_log` with a category (completeness, uniqueness, validity, referential integrity, reconciliation, freshness, business rule):
+
+- **Reconciliation:** source → Silver per key and version, Silver → staging row counts, and **business metrics** (revenue, order count, payments). Staging → Gold must match exactly (critical); source → Gold is a warning, because quarantined rows explain differences there.
+- **Freshness:** *data* freshness (has new data arrived?) comes from dbt source freshness. *Pipeline* freshness (was the previous daily run recent?) catches missed schedules.
+- **dbt results:** every dbt test and freshness result is loaded into the same log ([`dbt_results.py`](src/dbt_results.py)).
+
+**Scorecard:** `audit.dq_scorecard` scores every run (checks, passed, warned, failed, pass rate, and a health score where a warning counts as half). `audit.dq_scorecard_by_category` breaks it down by category. A critical failure fails the pipeline.
 
 ### 7. Orchestration with Prefect
 [`flows/`](flows/) wraps every step as a Prefect task:

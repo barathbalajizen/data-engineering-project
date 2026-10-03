@@ -34,7 +34,9 @@ def apply_migrations(eng, migrations_dir=MIGRATIONS_DIR, log=None):
         applied = {r[0] for r in c.execute(sa.text("SELECT version FROM audit.schema_migrations"))}
         todo = pending_migrations(files, applied)
         for f in todo:
-            c.exec_driver_sql(Path(f).read_text(encoding="utf-8"))
+            # Raw driver cursor without parameters (same transaction): with parameters, psycopg2 would read
+            # every % in the SQL (e.g. LIKE 'recon_%') as a placeholder
+            c.connection.dbapi_connection.cursor().execute(Path(f).read_text(encoding="utf-8"))
             c.execute(sa.text("INSERT INTO audit.schema_migrations(version) VALUES (:v)"), {"v": Path(f).stem})
             if log:
                 log.info("applied migration %s", Path(f).name)

@@ -8,5 +8,5 @@ ecommerce:
       user: "{{ env_var('PG_USER', 'de') }}"
       password: "{{ env_var('PG_PASSWORD', 'de') }}"
       dbname: "{{ env_var('PG_DB', 'shop') }}"
-      schema: analytics
+      schema: "{{ env_var('DBT_SCHEMA', 'analytics') }}"   # DBT_SCHEMA=... builds a separate copy (e.g. to verify)
       threads: 2

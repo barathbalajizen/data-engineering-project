@@ -5,8 +5,20 @@ profile: ecommerce
 
 model-paths: ["models"]
 snapshot-paths: ["snapshots"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
 
+# Layers (Postgres schemas, from the profile's target schema "analytics"):
+#   staging       analytics_stg  views: light renaming of the Spark-loaded `staging` landing tables
+#   intermediate  analytics_int  views: joins and derived fields shared by several marts
+#   marts         analytics      tables (facts incremental): the star schema and aggregates
 models:
   ecommerce:
+    staging:
+      +schema: stg
+      +materialized: view
+    intermediate:
+      +schema: int
+      +materialized: view
     marts:
       +materialized: table
