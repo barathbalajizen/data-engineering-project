@@ -201,6 +201,8 @@ All datasets are defined once in [`export_showcase.py`](src/export_showcase.py).
 
 ## How to run
 
+The steps below use the Prefect UI. Every command (Docker, testing, Prefect from the command line) is grouped in [Commands](#commands).
+
 ### Prerequisites
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) with **6 GB+ memory** (Settings → Resources)
 - About 10 GB free disk space, and internet for the first build
@@ -245,6 +247,112 @@ Run **`ecommerce-export-showcase/04-export-dashboard-snapshot`**, then commit an
 | `ecommerce-export-showcase/04-export-dashboard-snapshot` | Export a result snapshot to `docs/sample_output/` |
 | `ecommerce-delta-inspect/ops-delta-time-travel-inspect` | Read-only Delta history, time travel (`as-of`) and Change Data Feed (`changes`). Parameters: `action`, `table` (e.g. `bronze/orders`), `version`, `timestamp`, `from_version` |
 | `ecommerce-lake-maintenance/ops-weekly-lake-maintenance` | Weekly (Sunday 03:00, `MAINTENANCE_CRON`): OPTIMIZE Delta tables with many small files, VACUUM dry run. Parameters: `min_files`, `small_file_mb`, `vacuum` (really delete files older than the 7-day retention) |
+
+---
+
+## Commands
+
+Run every command from the project folder. Commands that start with `docker compose exec pipeline` run inside the pipeline container, so the stack must be running.
+
+### 1. Docker: build and run the stack
+
+```bash
+cp .env.example .env                              # first time only: configuration and credentials
+
+docker compose up -d --build                      # build the images and start postgres, prefect-server, pipeline
+docker compose --profile dashboard up -d --build  # also start the dashboard (http://localhost:8501)
+docker compose ps                                 # status of the containers
+docker compose logs -f pipeline                   # follow the pipeline logs (Ctrl+C to stop following)
+docker compose restart pipeline                   # reload the deployments after changing flows/serve.py
+docker compose stop                               # stop the containers, keep all data
+docker compose start                              # start them again
+docker compose down                               # remove the containers, keep all data (volumes, lake/)
+```
+
+> `docker compose down -v` also deletes the Postgres volume, which holds the source, warehouse and audit data. Use it only to start over from nothing.
+
+Production (code baked into the images, JSON logs, no published database port; see [docs/deployment.md](docs/deployment.md)):
+```bash
+cp .env.prod.example .env.prod                    # then set real secrets
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod up -d --build
+```
+
+### 2. Testing
+
+**Unit tests:** no database needed. They run in the container or on your machine.
+```bash
+docker compose exec pipeline pytest tests -m "not integration" -v   # all unit tests
+docker compose exec pipeline pytest tests/test_transforms.py -v     # one file
+docker compose exec pipeline pytest tests/test_windowing.py::test_backfill_window_ignores_watermark -v   # one test
+docker compose exec pipeline pytest tests -k skew -v                # tests whose name contains "skew"
+```
+Without Docker, you need **Python 3.11** and **Java 17**, as in CI:
+```bash
+pip install pyspark==3.5.1 pytest==8.2.2 pandas==2.1.4
+pytest tests -m "not integration" -v
+```
+
+**Integration tests:** these need the running stack (Postgres, Delta, Prefect).
+```bash
+docker compose exec pipeline pytest tests -m integration -v
+```
+
+**All tests:** unit and integration.
+```bash
+docker compose exec pipeline pytest tests -q
+```
+
+**dbt tests** (run them after the first pipeline run):
+```bash
+docker compose exec pipeline bash -c "cd dbt_project && /opt/dbt_venv/bin/dbt test"   # 70 data tests on the warehouse
+docker compose exec pipeline bash -c "cd dbt_project && /opt/dbt_venv/bin/dbt source freshness"
+```
+
+**Lint and validation:** these are the same checks CI runs, and they need no database.
+```bash
+pip install ruff==0.6.9 && ruff check .                              # Python lint
+pip install -r requirements-dbt.txt
+DBT_PROFILES_DIR=dbt_project dbt parse --project-dir dbt_project     # validate the dbt project
+docker compose config -q                                             # validate the Compose file
+```
+
+### 3. Orchestration: Prefect
+
+Everything here can also be done in the UI at http://localhost:4200 → **Deployments** → **Run**. From the command line:
+
+```bash
+# Run a deployment (--watch waits and shows the final state)
+docker compose exec pipeline prefect deployment run 'ecommerce-setup/01-first-time-setup' --watch
+docker compose exec pipeline prefect deployment run 'ecommerce-daily/02-daily-incremental-load' --watch
+
+# Run with parameters (-p key=value)
+docker compose exec pipeline prefect deployment run 'ecommerce-setup/01-first-time-setup' -p n_orders=5000 --watch
+docker compose exec pipeline prefect deployment run 'ecommerce-backfill/03-backfill-date-range' \
+  -p start=2017-03-01 -p end=2017-04-01 --watch
+
+# Partial run and recovery
+docker compose exec pipeline prefect deployment run 'ecommerce-daily/02-daily-incremental-load' \
+  -p start_from=load-warehouse --watch                     # skip extract and silver
+docker compose exec pipeline prefect deployment run 'ecommerce-daily/02-daily-incremental-load' \
+  -p resume_failed=true --watch                            # continue the latest failed run from the failed step
+
+# Check deployments and runs
+docker compose exec pipeline prefect deployment ls                   # all deployments
+docker compose exec pipeline prefect flow-run ls --limit 10          # latest runs and their state
+docker compose exec pipeline prefect flow-run ls --state Failed      # failed runs only
+docker compose exec pipeline prefect flow-run logs <flow-run-id>     # logs of one run
+docker compose exec pipeline prefect flow-run cancel <flow-run-id>   # cancel a running run
+```
+
+The daily steps, in order, are `extract-bronze`, `transform-silver`, `load-warehouse`, `dbt-build` and `quality-checks`. Use them for `start_from` and `stop_after`.
+
+### 4. Database: optional
+
+```bash
+docker compose exec postgres psql -U de -d shop                                       # SQL shell
+docker compose exec postgres psql -U de -d shop -c "SELECT * FROM audit.dq_scorecard ORDER BY run_ts DESC LIMIT 5"
+```
+`de` / `shop` are the values from `.env.example`. Use yours if you changed them.
 
 ---
 
@@ -296,32 +404,7 @@ The project has **128 pytest tests** (unit and integration) and **70 dbt tests**
 | `test_flow_resume.py` | The real daily flow on a temporary Prefect server: order, partial runs, failure and resume |
 | `test_audit_pg.py`, `test_checkpoints_pg.py`, `test_dq_scorecard_pg.py` | Migrations, audit rows, monotonic watermark and its history trigger, run views, DQ scorecard |
 
-### Run the tests in Docker (easiest)
-With the stack running:
-```bash
-docker compose exec pipeline pytest tests -q                       # all tests, short output
-docker compose exec pipeline pytest tests -v                       # all tests, one line per test
-docker compose exec pipeline pytest tests/test_transforms.py -v    # one file
-docker compose exec pipeline pytest tests/test_windowing.py::test_backfill_window_ignores_watermark -v   # one test
-docker compose exec pipeline pytest tests -k skew -v               # tests whose name contains "skew"
-```
-
-### Run the tests without Docker
-Needs **Python 3.11** and **Java 17** (the same as CI):
-```bash
-pip install pyspark==3.5.1 pytest==8.2.2
-pytest tests -v
-```
-
-### dbt tests
-```bash
-# Run the dbt tests against the warehouse (stack running, after Step 3)
-docker compose exec pipeline bash -c "cd dbt_project && /opt/dbt_venv/bin/dbt test"
-
-# Validate the dbt project without a database (what CI does)
-pip install -r requirements-dbt.txt
-DBT_PROFILES_DIR=dbt_project dbt parse --project-dir dbt_project
-```
+The commands to run them are in [Commands → 2. Testing](#2-testing).
 
 ---
 
