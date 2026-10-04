@@ -9,7 +9,6 @@
 
 A batch data platform for an online store, built end to end. It **extracts** orders incrementally from an operational Postgres database, **cleans** them in a Delta Lake (Bronze → Silver), **models** a star schema with history tracking in dbt (Gold), **checks** data quality, and is **orchestrated, scheduled and monitored** with Prefect. A Streamlit dashboard shows the results. Everything runs locally with one Docker command and costs nothing.
 
-- **Live dashboard:** _add your Streamlit Community Cloud link here_
 - **Sample output (no setup needed):** [docs/sample_output/](docs/sample_output/README.md)
 
 ---
