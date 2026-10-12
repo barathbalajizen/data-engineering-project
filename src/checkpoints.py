@@ -24,7 +24,8 @@ def get_watermark(eng, table):
 
 @retry(attempts=3, base_delay=2)
 def advance_watermark(eng, table, value, run_id):
-    """Move the watermark to `value` if that is later than the stored one. Returns True if it moved."""
+    """Move the watermark to `value` if that is later than the stored one. Returns True if it moved.
+    Example: stored 10:00. A run sets 10:30 -> moves. An old, slow run then tries 09:55 -> nothing changes."""
     with eng.begin() as c:
         set_run_context(c, run_id)
         moved = c.execute(sa.text(

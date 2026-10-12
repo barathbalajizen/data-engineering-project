@@ -1,19 +1,37 @@
-"""Source (Postgres) -> Bronze (Delta).
+"""Source (Postgres) -> Bronze (Delta Lake): copy the source rows into the lake, unchanged, plus metadata.
 
-orders  : incremental by watermark WITH an overlap window. The Bronze write is an
-          insert-if-not-exists MERGE on (order_id, updated_at), so reruns, a crash
-          between the write and the watermark update, overlap re-reads and backfills
-          can never create duplicate rows.
-backfill: --start/--end re-extract a window (by updated_at) and leave the watermark alone.
-others  : full snapshot, overwritten each run.
-Every row carries ingestion_ts, batch_id (unique per table per run attempt), source_system, pipeline_run_id
-and source_table. Each table is audited in audit.pipeline_run_log with lineage in audit.lineage.
+Bronze is the raw history. Nothing is cleaned or deleted here (that is Silver's job).
 
-Schema drift: the source schema is compared with the accepted Bronze schema before writing (schema_drift.py).
-New columns evolve the table, narrower types are cast, removed columns and other type changes fail the table
-(SCHEMA_DRIFT_ALLOW_REMOVED_COLUMNS=true fills removed columns with NULL instead). Every change is recorded
-in audit.schema_changes. Tables keep a known time-travel window (retention properties) and orders has Change
-Data Feed enabled so downstream steps can read only what changed.
+Three ways of extracting (TABLES below):
+  orders: INCREMENTAL, with a watermark.
+    - control.watermark stores the newest updated_at already extracted, e.g. 2018-03-15 10:00.
+    - The next run reads orders with updated_at >= watermark - 10 minutes. These 10 minutes are the OVERLAP
+      window (WATERMARK_LOOKBACK_MINUTES). Why: a slow source transaction can commit a row a little later
+      than other rows, with an updated_at older than the watermark. Without the overlap it would be skipped
+      forever.
+    - The overlap reads some rows twice. They are not duplicated: Bronze is written with an
+      insert-if-not-exists MERGE on (order_id, updated_at), so a version already in Bronze is skipped. The
+      same makes reruns, retries and backfills safe.
+    - A changed order is a NEW row (new updated_at). Bronze keeps every version; Silver picks the latest.
+    - The watermark moves forward only AFTER the write succeeded, and never backwards (checkpoints.py).
+  backfill (--start/--end): re-extract the orders whose updated_at is in [start, end), e.g. to restore lost
+    data. The watermark is not touched.
+  other tables: FULL SNAPSHOT. They are small: read in full and overwritten every run.
+
+Metadata columns added to every row:
+  ingestion_ts     when the row was written to Bronze
+  batch_id         one id per table per attempt, e.g. orders-20261003T101500-1a2b3c4d
+  source_system    where it came from: 'postgres_shop'
+  pipeline_run_id  the Prefect flow run that loaded it
+  source_table     e.g. 'source.orders'
+
+Before writing, the source columns are compared with the Bronze table (schema drift, schema_drift.py): a new
+column is added, a narrower type is converted (int -> bigint), and a removed column or any other type change
+stops the table without writing it. Every change is recorded in audit.schema_changes.
+
+Delta settings: the version history is kept for 30 days and old data files for at least 7 (time travel); orders
+has Change Data Feed switched on, so Silver can read only the rows that changed.
+Each table is logged in audit.pipeline_run_log and audit.lineage.
 """
 import argparse
 import os
@@ -43,7 +61,8 @@ TABLES = {
 }
 
 
-# Time-travel window: versions stay readable for logRetention; VACUUM keeps old files for deletedFileRetention
+# Time travel: old table versions stay readable for 30 days (logRetention). VACUUM only deletes data files that
+# have been unused for at least 7 days (deletedFileRetention).
 RETENTION_PROPS = {
     "delta.logRetentionDuration": os.getenv("BRONZE_LOG_RETENTION", "interval 30 days"),
     "delta.deletedFileRetentionDuration": os.getenv("BRONZE_FILE_RETENTION", "interval 7 days"),
@@ -66,8 +85,9 @@ def parse_args():
 
 
 def check_schema(spark, a, table, src_df):
-    """Compare the source schema with the accepted Bronze schema, record and enforce the drift policy.
-    Returns (aligned source DataFrame, existing Bronze schema or None)."""
+    """Compare the source columns with the Bronze table (schema_drift.py), record any change in
+    audit.schema_changes, and stop the table if the change is not allowed.
+    Returns (source DataFrame with allowed conversions applied, Bronze schema or None if no table yet)."""
     existing = delta_schema(spark, bronze_path(table))
     report = compare_schemas(existing, schema_dict(src_df.schema))
     if report.has_changes:
@@ -80,8 +100,10 @@ def check_schema(spark, a, table, src_df):
 def write_bronze(spark, df, path, cfg, existing):
     """Write one table to Bronze. Returns (rows inserted, Delta version written).
 
-    incremental: insert-if-not-exists MERGE on the version keys; full: overwrite.
-    Schema evolution is switched on only when the (already accepted) DataFrame has columns the table lacks.
+    First run: create the table.
+    Incremental (orders): MERGE that only inserts rows whose (order_id, updated_at) is not in Bronze yet.
+    Full snapshot: overwrite the table.
+    New columns are added to the table only when the schema check above has accepted them.
     """
     evolve = existing is not None and bool({c.lower() for c in df.columns} - set(existing))
     if existing is not None:
@@ -108,6 +130,8 @@ def write_bronze(spark, df, path, cfg, existing):
 def extract_table(spark, eng, args, table, cfg):
     """Extract one source table into Bronze inside an audit step."""
     batch_id = make_batch_id(table)
+    # 1. Decide what to read: orders from the watermark minus the overlap (or the backfill window);
+    #    the other tables in full
     with audit_step(table_name=f"bronze.{table}", batch_id=batch_id, engine=eng) as a:
         window = "full snapshot"
         if cfg["mode"] == "incremental":
@@ -123,6 +147,7 @@ def extract_table(spark, eng, args, table, cfg):
         else:
             dbtable = f"source.{table}"
 
+        # 2. Read from Postgres, check the schema against Bronze, add the metadata columns
         src_df, existing = check_schema(spark, a, table, jdbc_read(spark, dbtable))
         df = (src_df
               .withColumn("ingestion_ts", F.current_timestamp())
@@ -132,6 +157,7 @@ def extract_table(spark, eng, args, table, cfg):
               .withColumn("source_table", F.lit(f"source.{table}")))
         a.rejected = a.updated = 0
 
+        # 3. Write to Bronze. Orders: then move the watermark (normal runs only, never on a backfill)
         if cfg["mode"] == "incremental":
             df = df.cache()
             n = a.source_rows = df.count()

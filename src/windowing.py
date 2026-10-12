@@ -9,10 +9,13 @@ def _parse(value):
 
 
 def extraction_window(watermark, lookback_minutes=10, start=None, end=None):
-    """Return (lower_inclusive, upper_exclusive_or_None, is_backfill).
+    """Return (lower_inclusive, upper_exclusive_or_None, is_backfill): the updated_at range to read.
 
-    Normal run : lower = watermark - lookback (overlap window catches late-committed rows).
-    Backfill   : explicit [start, end) on updated_at; the watermark must NOT be touched.
+    Normal run: from the watermark minus the overlap, with no upper end.
+        watermark 10:00, lookback 10 min  ->  updated_at >= 09:50
+        The 10 overlap minutes catch rows committed late with an older updated_at.
+    Backfill: exactly the [start, end) range given; the caller must NOT move the watermark.
+        start=2017-03-01, end=2017-04-01  ->  2017-03-01 <= updated_at < 2017-04-01
     """
     if lookback_minutes < 0:
         raise ValueError("lookback_minutes must be >= 0")
@@ -29,6 +32,8 @@ def split_window(start, end, chunk_days=31, max_chunks=1000):
     """Split [start, end) into consecutive chunks of at most chunk_days.
 
     Returns a list of (start, end) strings that extract_bronze.py --start/--end accepts.
+    Example: 2017-01-01 .. 2017-03-15 with chunk_days=31 ->
+        [2017-01-01, 2017-02-01), [2017-02-01, 2017-03-04), [2017-03-04, 2017-03-15)
     Each chunk becomes its own Prefect task, so one failed chunk retries without redoing the others.
     """
     if chunk_days < 1:

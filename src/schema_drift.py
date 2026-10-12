@@ -1,16 +1,23 @@
-"""Schema drift detection and controlled schema evolution (pure Python, unit-tested).
+"""Schema drift: what to do when the source table's columns change (pure Python, unit-tested).
 
-The baseline is the schema already accepted into the target (the Bronze Delta table, or a Postgres staging
-table). Each load compares the incoming schema with it:
+"Schema drift" = the source adds, removes or changes a column. Before every Bronze write, the source columns
+are compared with the columns the Bronze table already has (extract_bronze.check_schema):
 
-  added column       -> allowed: the target evolves (new column, NULL for older rows)
-  narrower type      -> allowed: cast to the target type (e.g. int -> bigint), listed in SAFE_CASTS
-  removed column     -> breaking: fail, unless allow_removed=True (then it is filled with NULL)
-  other type change  -> breaking: fail (e.g. text -> int, bigint -> int, double -> int)
+  Change                                   Example                             What happens
+  new column                               source gets a `channel` column      ALLOWED: column added to Bronze,
+                                                                               empty (NULL) for older rows
+  narrower type                            source sends int, Bronze has bigint ALLOWED: converted to bigint
+                                                                               (no information lost; SAFE_CASTS)
+  removed column                           source drops `customer_city`        STOP (or fill with NULL if
+                                                                               SCHEMA_DRIFT_ALLOW_REMOVED_COLUMNS)
+  any other type change                    price arrives as text               STOP
 
-Without this check Delta MERGE silently drops new source columns and a type change fails deep inside a
-write; here every change is detected up front, decided by an explicit rule and recorded in
-audit.schema_changes.
+Why stop: a removed column or a changed type usually means the source changed its meaning. Loading anyway
+would silently produce empty or wrong data, so a person decides. Nothing is written to that table, and the
+extract step fails with a message that names the change.
+Why check at all: Delta MERGE would silently drop a new column, and a type change would fail deep inside the
+write. Here every change is found first, handled by an explicit rule, and recorded in audit.schema_changes.
+Later layers follow Bronze: Silver's MERGE adds the new column, and load_warehouse.py adds it to staging.
 """
 from dataclasses import dataclass, field
 
