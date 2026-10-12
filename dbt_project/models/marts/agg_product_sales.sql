@@ -1,5 +1,6 @@
--- One row per product: orders, units, revenue, price and its rank / share of total revenue
--- (non-canceled orders).
+-- AGGREGATE: product sales
+-- What:  One row per product: orders, units sold, revenue, average price, first and last sale date,
+--        revenue_rank (1 = highest revenue) and revenue_share_pct (% of all revenue). Non-canceled orders only.
 select
     p.product_key,
     p.product_id,

@@ -1,6 +1,16 @@
--- One row per month: orders, customers (new vs returning), revenue and average order value.
--- A customer is a person (customer_unique_id): Olist gives every order its own customer_id.
--- Revenue = item prices of non-canceled orders (same definition as agg_daily_sales; freight separate).
+-- AGGREGATE: monthly KPIs
+-- What:  One row per month: orders, customers (new vs returning), items, revenue, freight, average order
+--        value and the share of late deliveries.
+-- Definitions:
+--   customer             a person (customer_unique_id), not customer_id (which is new for every order)
+--   new customer         their first order ever was in this month
+--   returning customer   they had ordered in an earlier month
+--   revenue              item prices of non-canceled orders (freight separate), as in agg_daily_sales
+--   avg_order_value      revenue / number of orders
+--   late_delivery_pct    % of orders delivered after the estimated date
+-- Steps: (1) collapse items into one row per order, (2) find each customer's first month,
+--        (3) group by month.
+-- (1) one row per order (fact_orders has one row per item)
 with orders as (
     select
         f.order_id,
@@ -16,12 +26,14 @@ with orders as (
     group by f.order_id, c.customer_unique_id
 ),
 
+-- (2) the month of each customer's first order: decides new vs returning
 first_purchase as (
     select customer_unique_id, date_trunc('month', min(purchased_at)) as first_month
     from orders
     group by customer_unique_id
 )
 
+-- (3) one row per month
 select
     date_trunc('month', o.purchased_at)::date                                   as month,
     count(*)                                                                    as orders,

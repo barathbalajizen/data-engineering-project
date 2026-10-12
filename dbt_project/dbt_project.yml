@@ -8,10 +8,13 @@ snapshot-paths: ["snapshots"]
 macro-paths: ["macros"]
 test-paths: ["tests"]
 
-# Layers (Postgres schemas, from the profile's target schema "analytics"):
-#   staging       analytics_stg  views: light renaming of the Spark-loaded `staging` landing tables
-#   intermediate  analytics_int  views: joins and derived fields shared by several marts
-#   marts         analytics      tables (facts incremental): the star schema and aggregates
+# Layers, in the order the data flows (and the order to read the models in):
+#   1. sources       staging        tables loaded from Silver by Spark (models/sources.yml); dbt does not build them
+#   2. staging       analytics_stg  views: pick and rename columns, one model per source table
+#   3. intermediate  analytics_int  views: joins and derived fields used by several marts
+#   4. snapshots     snapshots      customer history (SCD Type 2), snapshots/customers_snapshot.sql
+#   5. marts         analytics      tables: dimensions, then facts (incremental), then aggregates
+# Every file starts with a comment saying what it builds and why. The full walkthrough is docs/how_it_works.md.
 models:
   ecommerce:
     staging:

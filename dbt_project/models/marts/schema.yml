@@ -1,25 +1,32 @@
 version: 2
 
+# Read in this order: dimensions, facts, then aggregates built from the facts.
+
 models:
+  - name: dim_date
+    description: "One row per day, 2016-2030. date_key = YYYYMMDD as a number."
+    columns:
+      - name: date_key
+        data_tests: [unique, not_null]
   - name: dim_customer
+    description: "SCD Type 2: one row per version of a customer (valid_from, valid_to, is_current), built from the customers_snapshot."
     columns:
       - name: customer_key
         data_tests: [unique, not_null]
       - name: is_current
         data_tests: [not_null]
   - name: dim_product
+    description: "One row per product. product_key = md5(product_id)."
     columns:
       - name: product_key
         data_tests: [unique, not_null]
   - name: dim_seller
+    description: "One row per seller. seller_key = md5(seller_id)."
     columns:
       - name: seller_key
         data_tests: [unique, not_null]
-  - name: dim_date
-    columns:
-      - name: date_key
-        data_tests: [unique, not_null]
   - name: fact_orders
+    description: "One row per item sold, with keys to all dimensions. Incremental: only new or changed orders are rebuilt. The customer key points to the version valid at purchase time."
     columns:
       - name: order_item_key
         data_tests: [unique, not_null]
@@ -57,6 +64,7 @@ models:
           - accepted_values:
               values: [created, approved, invoiced, processing, shipped, delivered, unavailable, canceled]
   - name: fact_payments
+    description: "One row per payment. Incremental like fact_orders."
     columns:
       - name: payment_key
         data_tests: [unique, not_null]
@@ -71,7 +79,12 @@ models:
               values: [credit_card, boleto, voucher, debit_card, not_defined]
       - name: payment_value
         data_tests: [non_negative]
+  - name: agg_daily_sales
+    description: "One row per day: orders, items, revenue (item prices), freight, late deliveries. Canceled orders excluded."
+  - name: agg_category_revenue
+    description: "One row per product category: orders, revenue, average delivery days."
   - name: agg_monthly_kpis
+    description: "One row per month: orders, new vs returning customers, revenue, average order value, late delivery %."
     columns:
       - name: month
         data_tests: [unique, not_null]
@@ -80,6 +93,7 @@ models:
       - name: new_customers
         data_tests: [non_negative]
   - name: agg_customer_retention
+    description: "Cohort retention: for customers who first ordered in a month, the % who ordered again N months later."
     data_tests:
       - unique_combination:
           columns: [cohort_month, months_since_first]
@@ -89,6 +103,7 @@ models:
       - name: retention_pct
         data_tests: [not_null, non_negative]
   - name: agg_product_sales
+    description: "One row per product: orders, units, revenue, revenue rank and share of total revenue."
     columns:
       - name: product_key
         data_tests:

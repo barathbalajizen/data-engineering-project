@@ -1,0 +1,7 @@
+version: 2
+
+models:
+  - name: int_order_items_enriched
+    description: "One row per order item with its order's customer, status, dates, delivery_days, is_late and order_updated_at."
+  - name: int_order_payments
+    description: "One row per payment with its order's purchase time and order_updated_at."

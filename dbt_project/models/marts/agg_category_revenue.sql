@@ -1,3 +1,5 @@
+-- AGGREGATE: revenue by product category
+-- What:  One row per category: orders, revenue and the average number of days to deliver.
 select
     p.category,
     count(distinct f.order_id)  as orders,

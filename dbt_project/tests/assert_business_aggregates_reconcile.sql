@@ -1,5 +1,6 @@
--- The business aggregates must agree with each other and with the daily aggregate: same revenue and order
--- count by month, by product and by day; and every retention cohort starts at 100% in its first month.
+-- TEST: the business aggregates agree with each other
+-- Passes when it returns no rows. Total revenue must be the same by day, by month and by product (within
+-- rounding), order counts must match by day and month, and every retention cohort must start at 100%.
 with daily as (select coalesce(sum(revenue), 0) as revenue, coalesce(sum(orders), 0) as orders
                from {{ ref('agg_daily_sales') }}),
 monthly as (select coalesce(sum(revenue), 0) as revenue, coalesce(sum(orders), 0) as orders

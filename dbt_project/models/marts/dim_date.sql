@@ -1,3 +1,8 @@
+-- DIMENSION: date
+-- What:  One row per calendar day from 2016-01-01 to 2030-12-31. Generated here, not loaded from a source.
+-- Why:   Reports can group by year, month, weekday or weekend with a simple join, instead of repeating date
+--        functions in every query.
+-- Key:   date_key is the date written as a number: 2017-03-15 -> 20170315. The facts store the same number.
 select
     to_char(d, 'YYYYMMDD')::int          as date_key,
     d::date                              as date_day,

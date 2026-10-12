@@ -57,10 +57,11 @@ flowchart LR
     PF -.-> AUD
 ```
 
-Details: [docs/architecture.md](docs/architecture.md) (layers, audit tables, deployments, design decisions, scaling path).
+**New to the project? Start with [docs/how_it_works.md](docs/how_it_works.md):** the logic step by step, with examples. Details: [docs/architecture.md](docs/architecture.md) (layers, audit tables, deployments, design decisions, scaling path).
 
 | Document | Contents |
 |---|---|
+| [docs/how_it_works.md](docs/how_it_works.md) | **Start here.** One order followed through every layer, a glossary, and every piece of logic explained with examples |
 | [docs/architecture.md](docs/architecture.md) | Architecture, data model, audit and lineage tables, design decisions and trade-offs |
 | [docs/deployment.md](docs/deployment.md) | Setup, configuration reference, dev vs prod, production checklist, CI |
 | [docs/performance.md](docs/performance.md) | Measured benchmarks and tuning decisions |

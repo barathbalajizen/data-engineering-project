@@ -1,4 +1,6 @@
--- Payments with their order's purchase date. Grain: one row per payment.
+-- INTERMEDIATE: payments with their order's details
+-- What:  One row per payment, with the order's purchase time (for the date key) and order_updated_at
+--        (so a payment is rebuilt in fact_payments whenever its order changes).
 select
     p.order_id,
     p.payment_sequential,

@@ -1,5 +1,14 @@
--- Order items with their order's attributes and delivery metrics. Grain: one row per order item.
--- order_updated_at drives the incremental facts: an item is reprocessed whenever its order changes.
+-- INTERMEDIATE: order items with their order's details
+-- What:  One row per order item, with the order's customer, status and dates added, plus two delivery
+--        metrics. fact_orders and the tests build on it.
+-- Why:   "Item + its order" is needed in several places; joining once here keeps that logic in one place.
+-- Columns added:
+--   delivery_days     days from purchase to delivery (NULL while the order is not delivered)
+--   is_late           1 if delivered after the estimated delivery date, otherwise 0
+--   order_updated_at  when the order last changed. The incremental fact uses it to decide what to rebuild:
+--                     when an order changes (e.g. shipped -> delivered), all of its items are rebuilt.
+-- Note:  Inner join: items whose order was rejected in Silver (quarantine) are left out. A dbt test warns
+--        about such items (relationships test on stg_order_items).
 select
     i.order_id,
     i.order_item_id,

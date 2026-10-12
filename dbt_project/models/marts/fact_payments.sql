@@ -1,4 +1,6 @@
--- Grain: one row per order payment. Incremental like fact_orders (payments are reprocessed with their order).
+-- FACT: payments
+-- Grain: one row per payment (an order paid in 2 parts = 2 rows).
+-- Built and loaded incrementally exactly like fact_orders: a payment is rebuilt whenever its order changes.
 {{ config(
     materialized='incremental',
     unique_key='payment_key',

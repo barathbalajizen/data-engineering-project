@@ -1,5 +1,9 @@
+{#
+  GENERIC TEST unique_combination: a primary key made of several columns must be unique.
+  In schema.yml:  data_tests: [{unique_combination: {columns: [order_id, order_item_id]}}]
+  Returns every combination that appears more than once.
+#}
 {% test unique_combination(model, columns) %}
--- Fails on every combination of `columns` that appears more than once (composite primary key)
 select {{ columns | join(', ') }}, count(*) as occurrences
 from {{ model }}
 group by {{ columns | join(', ') }}

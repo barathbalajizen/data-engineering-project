@@ -1,5 +1,6 @@
--- Business metric reconciliation inside Gold: revenue and order counts of the daily aggregate must equal the
--- order items they come from (non-canceled orders). Catches dropped rows, e.g. dates outside dim_date.
+-- TEST: daily revenue reconciles with the order items
+-- Passes when it returns no rows. Total revenue and order count in agg_daily_sales must equal the order
+-- items they come from (non-canceled orders). Catches lost rows, e.g. an order date missing from dim_date.
 with items as (
     select coalesce(sum(price), 0) as revenue, count(distinct order_id) as orders
     from {{ ref('int_order_items_enriched') }}

@@ -1,3 +1,9 @@
+-- AGGREGATE: daily sales
+-- What:  One row per day: orders, items sold, revenue, freight and late deliveries.
+-- Rules shared by all aggregates:
+--   - canceled orders are left out
+--   - revenue = sum of item prices; freight (shipping) is reported separately, not included in revenue
+-- The test assert_revenue_reconciles checks that these totals equal the order items they come from.
 select
     d.date_day,
     count(distinct f.order_id)  as orders,

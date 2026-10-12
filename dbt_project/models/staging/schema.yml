@@ -2,6 +2,7 @@ version: 2
 
 models:
   - name: stg_orders
+    description: "One row per order (latest valid version from Silver). Columns picked and renamed only."
     columns:
       - name: order_id
         data_tests: [unique, not_null]
@@ -14,20 +15,24 @@ models:
       - name: updated_at
         data_tests: [not_null]
   - name: stg_customers
+    description: "One row per customer_id. The person is customer_unique_id (Olist gives every order a new customer_id)."
     columns:
       - name: customer_id
         data_tests: [unique, not_null]
   - name: stg_products
+    description: "One row per product; a missing category becomes 'unknown'."
     columns:
       - name: product_id
         data_tests: [unique, not_null]
       - name: product_weight_g
         data_tests: [non_negative]
   - name: stg_sellers
+    description: "One row per seller."
     columns:
       - name: seller_id
         data_tests: [unique, not_null]
   - name: stg_order_items
+    description: "One row per product line of an order; key (order_id, order_item_id)."
     data_tests:
       - unique_combination:
           columns: [order_id, order_item_id]
@@ -45,6 +50,7 @@ models:
       - name: freight_value
         data_tests: [non_negative]
   - name: stg_order_payments
+    description: "One row per payment; an order can be paid in several parts; key (order_id, payment_sequential)."
     data_tests:
       - unique_combination:
           columns: [order_id, payment_sequential]
