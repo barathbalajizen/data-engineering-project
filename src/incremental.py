@@ -1,8 +1,10 @@
-"""Incremental Silver processing: which Bronze changes to read, and where the progress is stored.
+"""Incremental Silver: which Bronze changes to read, and where the progress is stored.
 
-Silver tracks the last Bronze Delta version it has merged (control.silver_checkpoint). Each run reads only
-the Bronze commits after that version through Change Data Feed, or does a full pass when an incremental read
-is not possible or not safe. decide_mode is pure Python so every case is unit-tested.
+Every write to a Delta table creates a new numbered version. Silver remembers the last Bronze version it has
+merged (the checkpoint, in control.silver_checkpoint). The next run reads only the versions after it, through
+Delta Change Data Feed. Example: checkpoint = 7, Bronze is now at version 9 -> read versions 8 and 9.
+When that is not possible or not safe, the run reads all of Bronze instead (slower, same result).
+decide_mode is plain Python, so every case is unit-tested (tests/test_incremental.py).
 """
 import logging
 
@@ -19,6 +21,16 @@ def decide_mode(checkpoint, bronze_version, cdf_since, target_exists, force_full
     checkpoint      last Bronze version merged into Silver (None = never)
     bronze_version  current Bronze version
     cdf_since       first Bronze version that has Change Data Feed data (None = CDF off)
+
+    The cases, checked in this order (the first that matches wins):
+        full refresh requested                              -> full
+        the Silver table does not exist yet                 -> full
+        no checkpoint yet (first run)                       -> full
+        Bronze version < checkpoint (table was recreated)   -> full
+        Bronze version = checkpoint (nothing new)           -> skip
+        Change Data Feed is not enabled on Bronze           -> full
+        the change data for the needed versions is gone     -> full
+        otherwise                                           -> incremental: versions checkpoint+1 .. current
     """
     if force_full:
         return FULL, "full refresh requested"

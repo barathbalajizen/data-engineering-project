@@ -1,9 +1,22 @@
-"""Row-level validation rules for Silver (pure PySpark, unit-tested).
+"""Validation rules for Silver (pure PySpark, unit-tested in tests/test_validation.py).
 
-A rule is a name plus a SQL condition that VALID rows satisfy; NULL counts as a failure. A row that fails
-any rule is quarantined with the list of every rule it failed (failed_rules) and a readable reason, so the
-quarantine shows exactly why each row was rejected.
+A rule = a name + a SQL condition that a VALID row meets. If the condition is false, or NULL (e.g. the column
+is empty), the row breaks the rule. The rules of each table are listed in transform_silver.SPECS.
 
+Kinds of rules:
+    not_null("order_id")                     the column must have a value (keys and required columns)
+    accepted("order_status", [...])          the value must be one of a list
+    castable("price", "double")              the value can be read as that type ("12.5" yes, "abc" no)
+    check("price_positive", "price > 0")     any other business rule
+
+apply_rules splits rows into valid and invalid. Every invalid row gets the list of ALL the rules it broke, and
+the same list as text, so the quarantine shows exactly why each row was rejected:
+
+    order_id | customer_id | order_status | failed_rules
+    o9       | NULL        | shiped       | [not_null:customer_id, accepted:order_status]
+    reason = "not_null:customer_id, accepted:order_status"
+
+Usage:
     rules = not_null("order_id", "customer_id") + [accepted("order_status", STATUSES)]
     valid, invalid = apply_rules(df, rules)
 """
@@ -50,6 +63,8 @@ def apply_rules(df, rules):
     if not rules:
         empty = df.limit(0).withColumn(FAILED_RULES, F.array().cast("array<string>")).withColumn(REASON, F.lit(""))
         return df, empty
+    # For every rule: its name if the row breaks it, otherwise NULL. Dropping the NULLs leaves the list of
+    # broken rules; an empty list means the row is valid.
     failures = F.filter(
         F.array(*[F.when(~F.coalesce(F.expr(r.condition), F.lit(False)), F.lit(r.name)) for r in rules]),
         lambda x: x.isNotNull())

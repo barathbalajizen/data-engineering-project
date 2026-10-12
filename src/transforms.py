@@ -13,7 +13,10 @@ def clean_strings(df):
 
 
 def dedupe_latest(df, keys, order_cols):
-    """Keep one row per key: the one with the greatest order_cols (latest wins)."""
+    """Keep one row per key: the one with the highest order_cols (the latest version wins).
+    Example, keys=[order_id], order_cols=[updated_at, ingestion_ts]:
+        O1 updated 03-10, O1 updated 03-15   ->   keeps O1 updated 03-15
+    Later order_cols only break ties (same updated_at: the copy loaded last wins)."""
     w = Window.partitionBy(*keys).orderBy(*[F.col(c).desc() for c in order_cols])
     return df.withColumn("_rn", F.row_number().over(w)).filter("_rn = 1").drop("_rn")
 
@@ -48,9 +51,12 @@ def salted_join(big, small, key, num_salts, how="inner", seed=42):
 
 
 def classify_versions(batch, target, keys, version_col):
-    """Compare a batch with the target table, per key. Returns counts of rows that are
-    new (key not in target), newer (will update), same (version already there) and late
-    (older than the target's version: a late-arriving record that must NOT overwrite newer data).
+    """Compare a batch with the target table key by key, and count each case:
+        new    the key is not in the target yet                     (will be inserted)
+        newer  the batch has a newer version than the target        (will update the target)
+        same   the target already has exactly this version          (nothing to do)
+        late   the batch version is OLDER than the target's         (late-arriving: must NOT overwrite newer data)
+    Example: target has O1@03-15. Batch O1@03-20 -> newer; O1@03-15 -> same; O1@03-10 -> late.
     target=None means the target does not exist yet (everything is new)."""
     if target is None:
         return {"new": batch.count(), "newer": 0, "same": 0, "late": 0}
@@ -67,7 +73,8 @@ def classify_versions(batch, target, keys, version_col):
 
 
 def reconcile_versions(source, silver, quarantine, key, version_col):
-    """Key- and version-level source -> Silver reconciliation (for a table with one key column).
+    """Did every source record reach Silver, with its newest version? Counts per key (one key column).
+    Used by the quality checks after each run (checks.py).
 
     missing            source keys found neither in Silver nor in quarantine (data was lost: critical)
     quarantined_only   source keys only in quarantine (every version was rejected)

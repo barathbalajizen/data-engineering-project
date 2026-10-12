@@ -1,19 +1,34 @@
-"""Bronze -> Silver (Delta): trim, validate, quarantine, deduplicate, idempotent load.
+"""Bronze -> Silver: clean, validate and deduplicate every table, and set bad rows aside with the reason.
 
-Per table:  trim strings -> validation rules (validation.py) -> invalid rows to quarantine with the rules they
-failed -> latest VALID version per key -> Silver. Validating before deduplicating means a bad newer version
-never hides the last good one.
+Steps for every table:
+  1. Read the Bronze rows to process.
+  2. Trim spaces in every text column.
+  3. Check every row against the table's rules (SPECS below; rule helpers in validation.py). A row that breaks
+     a rule goes to the quarantine (lake/silver/_quarantine/<table>) with the names of ALL the rules it broke,
+     e.g. failed_rules = [not_null:customer_id, accepted:order_status].
+  4. Keep one row per key: the latest VALID version (dedupe_latest). Validating BEFORE deduplicating matters:
+     if the newest version of an order is broken, Silver keeps the previous good version instead of losing it.
+  5. Write Silver, and record rows read / inserted / updated / rejected and lineage in the audit tables.
 
-orders (incremental): reads only the Bronze commits since the last checkpoint (control.silver_checkpoint)
-    through Delta Change Data Feed, and MERGEs them: new keys are inserted, strictly newer versions update,
-    equal versions are no-ops and LATE-ARRIVING older versions are ignored (counted in the lineage detail).
-    Nothing new in Bronze -> the table is skipped (no rewrite). Falls back to a full pass when there is no
-    checkpoint, CDF data is missing (retention, table recreated) or with --full-refresh /
-    SILVER_FULL_REFRESH=true. The quarantine is a log of rejected versions, merged insert-if-not-exists
-    on (key, updated_at), so reruns never duplicate it. The checkpoint moves only after both writes succeed.
-others (full snapshot): small tables re-read in full and overwritten; quarantine = current invalid rows.
-
-Each table is audited (rows read, inserted, updated, rejected) with lineage, including the Bronze versions read.
+Two ways of loading:
+  orders: INCREMENTAL (process_incremental). Bronze orders grows every day, so only what changed is read.
+    - Every write to a Delta table creates a new numbered version (0, 1, 2 ...). control.silver_checkpoint
+      stores the last Bronze version already merged into Silver.
+    - Delta Change Data Feed returns only the rows added in the Bronze versions after the checkpoint.
+    - Those rows are MERGEd into Silver by order_id:
+          order_id not in Silver yet            -> inserted
+          newer updated_at than the Silver row  -> replaces it
+          same updated_at                       -> nothing (already there)
+          OLDER updated_at (late-arriving)      -> ignored; Silver keeps the newer data (logged as late_ignored)
+    - Nothing new in Bronze -> the table is skipped. When reading only the changes is impossible or unsafe
+      (first run, change data expired, --full-refresh ...) all of Bronze is read instead; the MERGE gives the
+      same result. decide_mode in incremental.py lists every case.
+    - The quarantine is a log that only grows: a rejected version is added once (insert-if-not-exists on
+      order_id + updated_at), so running again never duplicates it.
+    - The checkpoint moves only AFTER Silver and the quarantine are written. If the run fails halfway, the
+      next run reads the same changes again, which is safe because the MERGE is idempotent.
+  other tables: FULL SNAPSHOT (process_full). They are small: re-read in full and overwritten every run.
+    Their quarantine is overwritten too, so it always shows the rows that are invalid right now.
 """
 import argparse
 import os
@@ -80,7 +95,12 @@ def parse_args():
 
 
 def validate(df, s):
-    """(latest valid version per key, invalid rows with failed_rules/reason, rule failure counts, duplicates)."""
+    """Steps 2-4 for one batch of rows. Returns:
+    latest      the latest valid version per key (what goes to Silver)
+    invalid     the rows that broke a rule, with failed_rules and reason (what goes to the quarantine)
+    failures    {rule name: number of rows that broke it}
+    duplicates  how many older valid versions were dropped by the deduplication
+    """
     valid, invalid = apply_rules(clean_strings(df), s["rules"])
     valid = valid.cache()
     latest = dedupe_latest(valid, s["keys"], s["order"]).cache()
@@ -116,6 +136,8 @@ def merge_quarantine_log(spark, invalid, table, s):
 
 
 def merge_silver(spark, latest, path, s):
+    """Write the latest valid versions into Silver: create the table on the first run, MERGE on the key after
+    (insert new keys, update only when the incoming version is newer)."""
     if not is_delta(spark, path):
         sized_for_write(latest, latest.count()).write.format("delta").mode("overwrite").save(path)
         return
@@ -132,6 +154,8 @@ def merge_silver(spark, latest, path, s):
 
 
 def process_incremental(spark, a, table, s, store, force_full):
+    """Silver for orders: process only the Bronze changes since the checkpoint (see the module docstring)."""
+    # 1. Decide: skip, incremental or full (every case is in decide_mode, incremental.py)
     path, bpath = silver_path(table), bronze_path(table)
     bronze_v = delta_version(spark, bpath)
     checkpoint, target_exists = store.get(table), is_delta(spark, path)
@@ -143,6 +167,7 @@ def process_incremental(spark, a, table, s, store, force_full):
     a.source_rows = a.inserted = a.updated = a.rejected = 0
     if mode == SKIP:
         return
+    # 2. Read the Bronze rows: the versions after the checkpoint (incremental) or the whole table (full)
     start = checkpoint + 1 if mode == INCREMENTAL else 0
     try:
         batch = read_bronze(spark, table, mode, start, bronze_v).cache()
@@ -156,10 +181,12 @@ def process_incremental(spark, a, table, s, store, force_full):
         batch = read_bronze(spark, table, mode, start, bronze_v).cache()
         a.source_rows = batch.count()
 
+    # 3. Validate and deduplicate; count how each version compares with Silver (new / newer / same / late)
     latest, invalid, failures, duplicates = validate(batch, s)
     target = spark.read.format("delta").load(path) if is_delta(spark, path) else None
     kinds = classify_versions(latest, target, s["keys"], s["version_col"])
 
+    # 4. Write the quarantine, then Silver, then move the checkpoint (last, so a failure means a safe re-read)
     a.rejected = invalid.count()
     merge_quarantine_log(spark, invalid, table, s)
     before = delta_version(spark, path)
@@ -167,7 +194,8 @@ def process_incremental(spark, a, table, s, store, force_full):
     a.inserted, a.updated, _, version = delta_write_counts(spark, path, before)
     store.set(table, bronze_v, mode)                 # only after Silver and quarantine are written
 
-    # Rejected versions newer than what Silver now holds: Silver keeps the last VALID version (stale vs source)
+    # 5. Report. Orders whose newest version was rejected: Silver keeps their last VALID version
+    #    (e.g. version 2 has an unknown status -> quarantined; Silver still shows version 1)
     superseded = classify_versions(dedupe_latest(invalid, s["keys"], s["order"]),
                                    spark.read.format("delta").load(path), s["keys"], s["version_col"])["newer"]
 
@@ -194,6 +222,7 @@ def process_incremental(spark, a, table, s, store, force_full):
 
 # ------------------------------------------------------------- full snapshot
 def process_full(spark, a, table, s):
+    """Silver for a small table: read all of Bronze, validate, then overwrite Silver and its quarantine."""
     path = silver_path(table)
     bronze_v = delta_version(spark, bronze_path(table))
     bronze = read_bronze(spark, table, FULL, 0, bronze_v).cache()
