@@ -32,6 +32,14 @@ A walkthrough of the logic for someone new to the project, in the order the data
    - [7.6 Facts and incremental loading](#76-facts-and-incremental-loading)
    - [7.7 Aggregates](#77-aggregates)
    - [7.8 dbt tests](#78-dbt-tests)
+8. [Running, recovering and monitoring](#8-running-recovering-and-monitoring)
+   - [8.1 The daily run](#81-the-daily-run)
+   - [8.2 Retries](#82-retries)
+   - [8.3 When a run fails: alert, partial run, resume](#83-when-a-run-fails-alert-partial-run-resume)
+   - [8.4 Quality checks](#84-quality-checks)
+   - [8.5 The data quality scorecard](#85-the-data-quality-scorecard)
+   - [8.6 The audit tables](#86-the-audit-tables)
+   - [8.7 Something went wrong: where to look](#87-something-went-wrong-where-to-look)
 
 ---
 
@@ -454,3 +462,110 @@ Month 0 is always 100%: everyone in the cohort ordered in that month by definiti
 | One-off checks | [`tests/`](../dbt_project/tests) | `assert_fact_orders_complete`: the incremental fact equals a full rebuild (nothing missing, nothing stale). `assert_revenue_reconciles`: daily revenue equals the order items it comes from. `assert_business_aggregates_reconcile`: day, month and product totals agree, and every cohort starts at 100% |
 
 70 tests run on every pipeline run. Every result (pass, warn, fail) is saved in `audit.dq_log` and counted in the data quality scorecard. A few tests only **warn**. An example is "an order item whose order is missing", which happens when Silver quarantined that order: it is worth seeing, but should not stop the pipeline.
+
+---
+
+## 8. Running, recovering and monitoring
+
+Code: [`ecommerce_flows.py`](../flows/ecommerce_flows.py) (the Prefect flows), [`pipeline_plan.py`](../src/pipeline_plan.py) (step order and resume point), [`checks.py`](../src/checks.py) (quality checks), [`audit.py`](../src/audit.py) (run log and lineage).
+
+### 8.1 The daily run
+
+Prefect starts `ecommerce-daily/02-daily-incremental-load` every day at 02:00. It runs these tasks **in order**; each one starts only when the previous one succeeded:
+
+| # | Task | What it does |
+|---|---|---|
+| 0 | `migrate-db` | Applies new database migrations; marks rows left "RUNNING" by a crashed run as ABANDONED |
+| 1 | `extract-bronze` | Section 4 |
+| 2 | `transform-silver` | Section 5 |
+| 3 | `load-warehouse` | Section 6 |
+| 4 | `dbt-build` | Section 7: builds every model and runs the 70 dbt tests |
+| 5 | `quality-checks` | 8.4 |
+| 6 | `run-summary` | Always runs, even after a failure: a summary in the run's **Artifacts** tab (row counts, watermark, quality results) |
+
+Each task starts the matching script in `src/` as a separate process. Every Spark job gets a clean start, and every script can also be run by hand. The script's output appears in the Prefect logs. Only one flow run executes at a time, so runs never overlap.
+
+### 8.2 Retries
+
+A failed task is retried **3 more times, after 1, 2 and 4 minutes**. Most failures are temporary, such as the database restarting or a network hiccup, and the retry succeeds. Retrying is safe because every step is idempotent.
+
+- `dbt-build` does not start over on a retry: it runs `dbt retry`, which continues from the model that failed.
+- `quality-checks` is **not** retried. A failed data check is not temporary, so retrying would only give the same answer.
+
+### 8.3 When a run fails: alert, partial run, resume
+
+**Alert:** when a run fails, crashes or is cancelled, a message is posted to `ALERT_WEBHOOK_URL` (Slack-compatible), naming the failed step:
+```
+PIPELINE FAILURE flow=ecommerce-daily ... | failed at load-warehouse; resume: run ecommerce-daily with resume_failed=true
+```
+
+**Resume** (`resume_failed = true`): continue the latest failed daily run from the step that failed. The step is found in the audit log ([`resume_point`](../src/pipeline_plan.py)):
+
+| Task in the failed run | Status |
+|---|---|
+| extract-bronze | SUCCESS |
+| transform-silver | SUCCESS |
+| load-warehouse | FAILED (after 3 retries) |
+
+The resumed run starts at `load-warehouse`, then runs `dbt-build` and `quality-checks`. Bronze and Silver are not run again. If the latest daily run succeeded, resume does nothing.
+
+**Partial run** (`start_from` / `stop_after`): run any part of the pipeline by hand, e.g. `start_from = dbt-build` after fixing a dbt model. Starting from any step is safe because each step re-reads what the previous step left.
+
+### 8.4 Quality checks
+
+Besides the 70 dbt tests (7.8), [`checks.py`](../src/checks.py) compares the layers with each other at the end of every run:
+
+| Check | Question it answers | If it fails |
+|---|---|---|
+| `bronze_orders_no_duplicate_versions` | Is any order version in Bronze twice? | **FAIL** |
+| `recon_source_vs_silver_orders` | Did every source order reach Silver or the quarantine? (5.7) | **FAIL** |
+| `recon_source_vs_silver_versions` | Does Silver have each order's newest version, or a recorded reason? | WARN |
+| `silver_orders_unique_key` | One row per order in Silver? | **FAIL** |
+| `recon_silver_vs_staging_orders` | Same number of orders in Silver and staging? | **FAIL** |
+| `fact_orders_no_null_customer_key` | Did every sale find its customer version? (7.4) | **FAIL** |
+| `recon_items_vs_fact` | Staging order items = `fact_orders` rows? | WARN |
+| `recon_revenue_staging_vs_gold` (also orders, payments) | Is the Gold total equal to staging, to the cent? | **FAIL** |
+| `recon_revenue_source_vs_gold` (also orders, payments) | Is the Gold total equal to the source? Quarantined rows can explain a difference | WARN |
+| `pipeline_previous_success_recent` | Was the previous successful daily run less than 26 hours ago? Catches missed schedules | WARN |
+
+- **FAIL** stops the run: the task fails and the alert fires.
+- **WARN** is recorded and shown, but the run still succeeds.
+
+Data freshness (when new data last arrived) is checked by dbt: `dbt source freshness` warns when no new row has arrived for 24 hours.
+
+### 8.5 The data quality scorecard
+
+Every result, from `checks.py` and from the dbt tests, goes to `audit.dq_log` with a category (reconciliation, uniqueness, completeness, validity, referential integrity, freshness, business rule). The view `audit.dq_scorecard` turns one run's results into two numbers:
+
+| Measure | Formula | Example: 90 checks, 89 pass, 1 warning |
+|---|---|---|
+| Pass rate | passed ÷ checks | 89 ÷ 90 = **98.9%** |
+| Health score | (passed + ½ × warnings) ÷ checks | (89 + 0.5) ÷ 90 = **99.4%** |
+
+`audit.dq_scorecard_by_category` gives the same per category. The dashboard's **Data quality** tab shows the trend over time.
+
+### 8.6 The audit tables
+
+| Table | One row per | Use it to answer |
+|---|---|---|
+| `audit.pipeline_run_log` | flow run, task attempt and table load | Did last night's run succeed? How long did each step take? How many rows were read, inserted, rejected? What was the error? |
+| `audit.lineage` | source → target copy | Where did this data come from, and which Delta version was written? |
+| `audit.dq_log` / `audit.dq_scorecard` | quality result / run | Which checks failed or warned? |
+| `audit.rejected_records` | rule broken per table per run | Why were rows quarantined? (with example keys) |
+| `audit.schema_changes` | column change detected | Did the source change its columns, and what was done? |
+| `control.watermark`, `control.silver_checkpoint` | table | Where will the next run start? |
+| `control.checkpoint_history` | change of either | When did the watermark or checkpoint move, and which run moved it? |
+| `audit.v_flow_runs`, `audit.v_task_stats` | run / task | History of runs; success rate and typical duration per task |
+
+A problem writing an audit row never fails the pipeline: a warning is logged and the step carries on.
+
+### 8.7 Something went wrong: where to look
+
+| Symptom | Look here |
+|---|---|
+| A run failed | Prefect UI → the run → **Logs** (the failed task's last lines) and the **Artifacts** tab. Fix the cause, then run with `resume_failed = true` |
+| A step is slow | `audit.v_task_stats` (typical duration per task), then the Spark UI at http://localhost:4040 while it runs |
+| Fewer rows than expected in Silver | `audit.rejected_records` and `lake/silver/_quarantine/<table>`: which rules rejected them |
+| Bronze stopped with "breaking schema change" | `audit.schema_changes`: which column changed. Section 4.5 says how to proceed |
+| Numbers differ between layers | `audit.dq_log` for the latest run: the `recon_*` checks show both values and the difference |
+| Data looks old | `control.watermark` (where extraction is) and the `pipeline_previous_success_recent` check |

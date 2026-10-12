@@ -1,16 +1,22 @@
-"""Prefect flows for the e-commerce pipeline.
+"""Prefect flows: run the pipeline steps in order, retry them, and recover from failures.
 
-ecommerce-daily     scheduled (see serve.py): extract -> silver -> staging -> dbt -> quality checks
-                    on demand: start_from / stop_after run part of it; resume_failed=true continues the latest
-                    failed daily run from the step that failed (found in the audit log)
-ecommerce-backfill  manual, parameterised: re-extract [start, end) in chunks, then rebuild downstream
+Flows (their deployments are registered in serve.py):
+  ecommerce-daily     every day at 02:00, or on demand:
+                        migrate-db -> extract-bronze -> transform-silver -> load-warehouse -> dbt-build
+                        -> quality-checks -> run-summary
+                      Parameters: start_from / stop_after run only part of it; resume_failed=true continues
+                      the latest failed daily run from the step that failed (found in the audit log).
+  ecommerce-backfill  on demand: re-extract the orders updated in [start, end), in chunks, then rebuild
+                      Silver, staging and Gold.
 
-Each step runs the existing script in a subprocess (Spark/JVM isolation, scripts stay runnable
-standalone). Its output is streamed into the Prefect run logs. A non-zero exit fails the task, and
-Prefect retries it with backoff. Every script is idempotent, so retries and reruns are safe.
+How a step runs: each task starts the matching script in src/ as a separate process (every Spark job gets a
+clean JVM, and every script can also be run by hand). The script's output appears in the Prefect logs.
+If the script fails, the task fails and Prefect retries it: 3 more times, after 1, 2 and 4 minutes. That is
+safe because every script is idempotent. A step only starts when the previous one succeeded.
 
-Audit: each flow run and each task attempt gets a row in audit.pipeline_run_log (status, duration, retry
-count, error); the scripts add one row per table with row counts. Migrations run at the start of each flow.
+When a run fails: notify_failure posts an alert (ALERT_WEBHOOK_URL) naming the step that failed and how to
+resume. Every flow run and every task attempt is recorded in audit.pipeline_run_log; the scripts add one row
+per table with row counts. Database migrations run at the start of each flow (migrate-db).
 """
 import collections
 import contextlib

@@ -1,5 +1,23 @@
-"""Data quality + reconciliation checks. Results go to audit.dq_log.
-Any CRITICAL failure exits non-zero so the orchestrator marks the task failed.
+"""Data quality and reconciliation checks: the last step of every pipeline run.
+
+Each check is recorded in audit.dq_log as PASS, WARN or FAIL:
+  FAIL  a critical check failed: this script exits with an error, so the run is marked failed and alerts fire
+  WARN  worth looking at, but the data can still be used (e.g. a source order changed during the run)
+
+What is checked (category in brackets; "warn" = can only warn, all the others can FAIL):
+  bronze_orders_no_duplicate_versions   no (order_id, updated_at) twice in Bronze           (uniqueness)
+  recon_source_vs_silver_orders         every source order is in Silver or the quarantine  (reconciliation)
+  recon_source_vs_silver_versions       Silver has each order's newest version, or a reason (warn)
+  silver_orders_unique_key              one row per order in Silver                         (uniqueness)
+  recon_silver_vs_staging_orders        Silver and staging have the same number of orders   (reconciliation)
+  fact_orders_no_null_customer_key      every fact row found its customer version           (completeness)
+  recon_items_vs_fact                   staging items = fact rows                           (warn)
+  recon_<revenue|orders|payments>_staging_vs_gold   equal to the cent                       (reconciliation)
+  recon_<revenue|orders|payments>_source_vs_gold    should match; may differ by quarantined rows (warn)
+  pipeline_previous_success_recent      the previous successful daily run was < 26 h ago    (freshness, warn)
+The dbt tests are added to the same log by dbt_results.py, so one scorecard (audit.dq_scorecard) covers both.
+
+Details:
 
 Source -> Silver reconciliation is key- and version-level (transforms.reconcile_versions): every source order
 must be in Silver or in the quarantine, and a Silver version older than the source must be explained by a

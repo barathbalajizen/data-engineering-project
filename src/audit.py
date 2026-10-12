@@ -1,5 +1,13 @@
 """Pipeline run audit (audit.pipeline_run_log) and lineage (audit.lineage).
 
+audit.pipeline_run_log has one row per flow run (level='flow'), per task attempt (level='task') and per table
+loaded (level='table'), with status, duration, row counts, retry count and error. Example for one table:
+    task extract-bronze | table bronze.orders | read 712 | inserted 700 | SUCCESS | 41.2 s
+audit.lineage has one row per source -> target copy, e.g. delta:bronze/orders -> delta:silver/orders, with the
+row count and the Delta version written.
+
+Usage:
+
     with audit_step("extract-bronze", table_name="bronze.orders", batch_id=bid, engine=eng) as a:
         ...
         a.source_rows, a.inserted, a.updated = n, ins, upd

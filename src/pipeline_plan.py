@@ -34,6 +34,10 @@ def plan_steps(start_from=None, stop_after=None, steps=STEPS):
 def resume_point(task_rows, steps=STEPS):
     """Where to resume a failed run, from its task attempts [(task_name, status), ...] in execution order.
 
+    Example: a run recorded
+        extract-bronze SUCCESS, transform-silver SUCCESS, load-warehouse FAILED (3 retries, all FAILED)
+    -> resume from load-warehouse: Bronze and Silver are not run again.
+
     The run's own first step is the first pipeline step it recorded (it may itself have been a partial run).
     From there, the first step whose LATEST attempt is not SUCCESS, or that never ran, is the resume point.
     Returns None when every step from the run's start succeeded (nothing to resume). Non-pipeline tasks
